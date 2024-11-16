@@ -7,25 +7,53 @@ import logging
 class NetworkManager:
     def __init__(self, port: int = 9090):
         self.port = port
-        self.nodes_network: Set[str] = set()  # Set of IP addresses
-        self.nodes_connections: Dict[str, Dict[str, float]] = {}  # Graph representation
+        self.nodes_network: Set[str] = {"10.0.0.10"}  # IP do server na topologia !!!
         self.server_socket = None
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
-
-    def initialize_node_connections(self, new_node: str) -> None:
-        """Initialize connections for a new node with default weights."""
-        if new_node not in self.nodes_connections:
-            self.nodes_connections[new_node] = {}
-            
-        # Connect new node to all existing nodes with a default weight
-        for existing_node in self.nodes_network:
-            if existing_node != new_node:
-                # Add bidirectional connections with default weight of 1
-                self.nodes_connections[new_node][existing_node] = 1
-                if existing_node not in self.nodes_connections:
-                    self.nodes_connections[existing_node] = {}
-                self.nodes_connections[existing_node][new_node] = 1
+        self.nodes_connections: Dict[str, Dict[str, float]] = {
+            "10.0.0.1": {
+                "10.0.0.10": 1.0,  
+                "10.0.1.2": 1.0   
+            },
+            "10.0.1.2": {
+                "10.0.0.1": 1.0,  
+                "10.0.11.2": 1.0 ,
+                "10.0.2.1": 1.0,
+                "10.0.3.2": 1.0  
+            },
+            "10.0.2.1": {
+                "10.0.1.2": 1.0,  
+                "10.0.11.2": 1.0   
+            },
+            "10.0.11.2": {
+                "10.0.2.1": 1.0,  
+                "10.0.1.2": 1.0,
+                "10.0.3.2": 1.0,
+                "10.0.4.2": 1.0,
+                "10.0.6.2": 1.0  
+            },
+            "10.0.3.2": {
+                "10.0.1.2": 1.0,
+                "10.0.11.2": 1.0,  
+                "10.0.4.2": 1.0, 
+                "10.0.6.2": 1.0
+            },
+            "10.0.3.2": {
+                "10.0.1.2": 1.0,
+                "10.0.11.2": 1.0,  
+                "10.0.4.2": 1.0, 
+                "10.0.6.2": 1.0
+            },
+            "10.0.4.2": {
+                "10.0.3.2": 1.0,
+                "10.0.11.2": 1.0
+            },
+            "10.0.6.2": {
+                "10.0.11.2": 1.0,
+                "10.0.3.2": 1.0
+            }
+        } 
 
     def dijkstra(self, graph: Dict[str, Dict[str, float]], start_node: str) -> Tuple[Dict[str, float], Dict[str, str]]:
         """Implementation of Dijkstra's algorithm for finding shortest paths."""
@@ -53,11 +81,9 @@ class NetworkManager:
         """Create a connection tree for all nodes in the network."""
         connections = {}
         for node in self.nodes_network:
-            distances, predecessors = self.dijkstra(self.nodes_connections, node)
-            # Get direct neighbors for each node
             connections[node] = [
-                neighbor for neighbor, pred in predecessors.items()
-                if pred == node or predecessors[neighbor] == node
+                neighbor for neighbor in self.nodes_connections[node]
+                if neighbor in self.nodes_network
             ]
         return connections
 
@@ -70,10 +96,11 @@ class NetworkManager:
 
                 # Add node to network and initialize connections
                 self.nodes_network.add(client_ip)
-                self.initialize_node_connections(client_ip)
 
                 # Create connection tree
                 connection_tree = self.create_tree()
+
+                print(f"A connection_tree está {connection_tree}")
                 
                 for node in self.nodes_network:
                     # Get neighbors for the new node
