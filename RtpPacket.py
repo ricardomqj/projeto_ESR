@@ -1,6 +1,7 @@
 import sys
 from time import time
-HEADER_SIZE = 12
+import socket
+HEADER_SIZE = 26 # Increased header size to accomodate new fields
 
 class RtpPacket:	
 	header = bytearray(HEADER_SIZE)
@@ -8,7 +9,7 @@ class RtpPacket:
 	def __init__(self):
 		pass
 		
-	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload):
+	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, client_ip, source_ip, is_movie_request, file_found, session_number):
 		"""Encode the RTP packet with header fields and payload."""
 		timestamp = int(time())
 		header = bytearray(HEADER_SIZE) 
@@ -28,6 +29,30 @@ class RtpPacket:
 		header[9] = (ssrc >> 16) & 0xFF;
 		header[10] = (ssrc >> 8) & 0xFF;
 		header[11] = ssrc & 0xFF
+		
+		try:
+			# Convert IP address to 4-byte representation and add to header
+			print(f"converting the ip_dest ip: {client_ip}")
+			ip_dest_bytes = socket.inet_aton(client_ip)
+			header[12:16] = ip_dest_bytes
+
+			# Convert source IP address to 4-byte representation
+			print(f"Converting the source IP: {source_ip}")
+			ip_source_bytes = socket.inet_aton(source_ip)
+			header[16:20] = ip_source_bytes
+		except socket.error as e:
+			print(f"Error converting IP address: {e}")
+			raise
+
+		header[20] = 1 if is_movie_request else 0
+		header[21] = 1 if file_found else 0
+
+		# Add session number (4 bytes)
+		header[22] = (session_number >> 24) & 0xFF
+		header[23] = (session_number >> 16) & 0xFF
+		header[24] = (session_number >> 8) & 0xFF
+		header[25] = session_number & 0xFF
+
 		# set header and  payload
 		self.header = header
 		self.payload = payload
@@ -64,7 +89,66 @@ class RtpPacket:
 		"""Return RTP packet."""
 		return self.header + self.payload
 
+	def getClientDestIP(self):
+		"""Return the client IP address from the header."""
+		return '.'.join(str(b) for b in self.header[12:16])
+
+	def getSourceIP(self):
+		"""Return the source IP address from the header."""
+		source_ip_bytes = bytearray(4)
+		source_ip_bytes[0] = self.header[16] & 0x3F 
+		source_ip_bytes[1:4] = self.header[17:20]
+		return '.'.join(str(b) for b in source_ip_bytes)
+
+	def isMovieRequest(self):
+		"""Return whether the packet is a movie request."""
+		return bool(self.header[20])
+	
+	def isFileFound(self):
+		"""Return whether the movie file was found"""
+		return bool(self.header[21])
+
+	def getSessionNumber(self):
+		"""Return the session number."""
+		session_number = (self.header[22] << 24) | (self.header[23] << 16) | (self.header[24] << 8) | self.header[25]
+		return int(session_number)
+
 	def printheader(self):
-		print("[RTP Packet] Version: ...")
+		"""Imprime o cabeçalho do pacote RTP de forma legível para debug."""
+		# Exibe versão, padding, extensão e número de CSRCs
+		version = self.version()
+		padding = (self.header[0] >> 5) & 0x01
+		extension = (self.header[0] >> 4) & 0x01
+		cc = self.header[0] & 0x0F
 
+		# Exibe marcador e tipo de payload
+		marker = (self.header[1] >> 7) & 0x01
+		payload_type = self.payloadType()
 
+		# Exibe o número de sequência e timestamp
+		seq_num = self.seqNum()
+		timestamp = self.timestamp()
+
+		# Exibe o SSRC
+		ssrc = (self.header[8] << 24) | (self.header[9] << 16) | (self.header[10] << 8) | self.header[11]
+
+		# Exibe o IP de destino, assumindo que foi adicionado após o SSRC
+		dest_ip = '.'.join(str(b) for b in self.header[12:16])
+		source_ip = self.getSourceIP()
+
+		# Impressão formatada do cabeçalho
+		print("[RTP Packet] Header Information:")
+		print(f"  Version: {version}")
+		print(f"  Padding: {padding}")
+		print(f"  Extension: {extension}")
+		print(f"  CSRC Count: {cc}")
+		print(f"  Marker: {marker}")
+		print(f"  Payload Type: {payload_type}")
+		print(f"  Sequence Number: {seq_num}")
+		print(f"  Timestamp: {timestamp}")
+		print(f"  SSRC: {ssrc}")
+		print(f"  Destination IP: {dest_ip}")
+		print(f"  Source IP: {source_ip}")
+		print(f"  Is Movie Request: {self.isMovieRequest()}")
+		print(f"  File Found: {self.isFileFound()}")
+		print(f"  Session number: {self.getSessionNumber()}")
