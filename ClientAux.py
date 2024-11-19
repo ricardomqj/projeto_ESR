@@ -1,11 +1,10 @@
-
 from tkinter import *
 from PIL import Image, ImageTk
 import tkinter.messagebox
-import socket, threading, sys
-import time
+import socket, threading
+import time, os
 from RtpPacket import RtpPacket
-from collections import OrderedDict
+import queue
 
 fronteira = ['10.0.10.2', '10.0.9.2']
 
@@ -17,6 +16,10 @@ class ClientRunner:
     READY = 1
     PLAYING = 2
     BUFFERING = 3
+
+    BUFFER_TIME = 2.0
+    FRAME_RATE = 30 
+    MAX_BUFFER_SIZE = BUFFER_TIME * FRAME_RATE # Maximum frames to buffer
     
     def __init__(self, master, server_addr, filename):
         self.master = master
@@ -31,11 +34,15 @@ class ClientRunner:
         print(f"Local IP -> {self.local_ip}")
         
         # Frame buffer to store the received frames
-        self.frame_buffer = OrderedDict()
-        self.last_received_time = 0
-        self.TIMEOUT_THRESHOLD = 8.0 # seconds to wait before assuming transmission is complete
+        self.frame_buffer = queue.PriorityQueue()
+        self.buffer_lock = threading.Lock()
+        self.playback_ready = threading.Event()
+        self.is_receiving = True
+        
+        #self.last_received_time = 0
+        #self.TIMEOUT_THRESHOLD = 1.5 # seconds to wait before assuming transmission is complete
 
-        # Create RTP socket with timeout
+        # Setup RTP socket
         self.setup_rtp_socket()
         
         # Start playback
@@ -60,14 +67,17 @@ class ClientRunner:
         """Start video playback"""
         print("Starting playback")
         if self.state == self.READY:
-            self.state = self.BUFFERING
-            print(f"self.state changed from READY to BUFFERING")
             # Start frame receiving thread
-            threading.Thread(target=self.handle_server_response).start()
+            self.receiver_thread = threading.Thread(target=self.receive_frames)
+            self.receiver_thread.daemon = True
+            self.receiver_thread.start()
 
-            # Start playback monitoring thread
-            threading.Thread(target=self.monitor_and_play).start()
+            # Start playback thread
+            self.playback_thread = threading.Thread(target=self.play_frames)
+            self.playback_thread.daemon = True
+            self.playback_thread.start()
 
+            # Send initial request
             for border_node in fronteira:
                 try:
                     self.connection_socket.sendto(
@@ -77,10 +87,87 @@ class ClientRunner:
                 except socket.error:
                     continue
 
+    def receive_frames(self):
+        """Continuously receive and buffer frames"""
+        initial_buffer_time = time.time()
+        frames_received = 0
+
+        while self.is_receiving:
+            try:
+                data, addr = self.connection_socket.recvfrom(20480)
+                if data:
+                    rtpPacket = RtpPacket()
+                    rtpPacket.decode(data)
+
+                    if rtpPacket.getClientDestIP() == self.local_ip:
+                        currFrameNbr = rtpPacket.seqNum()
+
+                        # Write frame to file and add to buffer
+                        frame_file = self.writeFrame(rtpPacket.getPayload(), currFrameNbr)
+                        self.frame_buffer.put((currFrameNbr, frame_file))
+                        frames_received += 1
+
+                        # Start playback after initial buffering period
+                        if not self.playback_ready.is_set():
+                            current_time = time.time()
+                            if (current_time - initial_buffer_time >= self.BUFFER_TIME or frames_received >= self.MAX_BUFFER_SIZE):
+                                print(f"Buffer ready with {frames_received} frames")
+                                self.playback_ready.set()
+                                self.state = self.PLAYING
+            except socket.timeout:
+                continue
+            except Exception as e:
+                print(f"Error receiving frame: {e}")
+                continue
+
+    def play_frames(self):
+        """Play frames from buffer while maintaining proper timing"""
+        frame_interval = 1.0 / self.FRAME_RATE
+
+        # Wait for initial buffer to fill
+        self.playback_ready.wait()
+
+        last_frame_time = time.time()
+
+        while self.state == self.PLAYING:
+            try:
+                # Get next frame from buffer
+                frameNbr, frame_file = self.frame_buffer.get(timeout=1.0)
+
+                # Calculate time to next frame
+                current_time = time.time()
+                time_diff = current_time - last_frame_time
+
+                # If we're ahead of schedule, wait
+                if time_diff < frame_interval:
+                    time.sleep(frame_interval - time_diff)
+
+                # Display frame
+                self.updateMovie(frame_file)
+                last_frame_time = time.time()
+
+                # Remove played from file
+                try:
+                    os.remove(frame_file)
+                except:
+                    pass
+
+            except queue.Empty:
+                # Buffer underrun - wait for more frames
+                print("Buffer underrun - waiting for frames")
+                continue
+            except Exception as e:
+                print(f"Error playing frame: {e}")
+                continue
+                
 
     def handler(self):
+        """Clean up on window close"""
         if tkinter.messagebox.askokcancel("Quit?", "Are you sure you want to quit?"):
-            self.master.destroy
+            self.is_receiving = False
+            self.state = self.INIT
+            self.connection_socket.close()
+            self.master.destroy()
 
     def createWidgets(self):
         # Create Play button
@@ -141,10 +228,14 @@ class ClientRunner:
 
     def updateMovie(self, imageFile):
         """Update the imagge field as video frame in the GUI"""
-        photo = ImageTk.PhotoImage(Image.open(imageFile))
-        self.label.configure(image = photo, height = 288)
-        self.label.image = photo
-        self.master.update()
+        try:
+            photo = ImageTk.PhotoImage(Image.open(imageFile))
+            self.label.configure(image = photo, height = 288)
+            self.label.image = photo
+            self.master.update()
+        except Exception as e:
+            print(f"Error updating frame: {e}")
+
 
     def handle_server_response(self):
         print("inside handle_server_response")
