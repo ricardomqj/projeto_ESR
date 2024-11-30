@@ -5,8 +5,9 @@ import socket, threading
 import time, os
 from RtpPacket import RtpPacket
 import queue
+import time
 
-fronteira = ['10.0.6.2']
+fronteira = ['10.0.6.2', '10.0.4.2']
 
 CACHE_FILE_NAME = "cache/cache-"
 CACHE_FILE_EXT = ".jpg"
@@ -62,10 +63,61 @@ class ClientRunner:
             print(f"Failed to bind socket: {e}")
             raise 
 
+    def select_best_access_point(self):
+        """
+        Select the best access point by measuring response times 
+        Returns IP of the best access point
+        """
+        ping_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        ping_socket.settimeout(1.0) # 1 second timeout for each ping
+
+        access_point_times = {}
+
+        for access_point in fronteira:
+            try:
+                # Send simple ping with current timestamp
+                ping_data = str(time.time()).encode()
+
+                start_time = time.time()
+                ping_socket.sendto(ping_data, (access_point, 9092))
+
+                try:
+                    #wait for response 
+                    response, _ = ping_socket.recvfrom(1024)
+                    end_time = time.time()
+
+                    # Calculate round trip time
+                    rtt = end_time - start_time
+                    access_point_times[access_point] = rtt
+                    print(f"Access Point {access_point} RTT: {rtt:.4f} seconds") 
+
+                except socket.timeout:
+                    print(f"No response from access point {access_point}")
+                    continue
+
+            except Exception as e:
+                print(f"Error testing access point {access_point}: {e}")
+                continue
+
+        # Close the temporary ping socket
+        ping_socket.close()
+
+        # Select the access point with the lowest response time
+        if access_point_times:
+            best_access_point = min(access_point_times, key=access_point_times.get)
+            print(f"Selected best access point: {best_access_point}")
+            return best_access_point
+        
+        # Fallback to first acces point if no responses
+        return fronteira[0] if fronteira else None
+
     def start_playback(self):
         """Start video playback"""
         print("Starting playback")
         if self.state == self.READY:
+            # Select best access point 
+            best_access_point = self.select_best_access_point()
+            
             # Start frame receiving thread
             self.receiver_thread = threading.Thread(target=self.receive_frames)
             self.receiver_thread.daemon = True
@@ -76,16 +128,18 @@ class ClientRunner:
             self.playback_thread.daemon = True
             self.playback_thread.start()
 
-            # Send initial request
-            for border_node in fronteira:
+
+            if best_access_point:
+                # Send initial request to best access point 
                 try:
                     self.connection_socket.sendto(
                         f"request|{self.filename}|{self.local_ip}".encode(),
-                        (border_node, 9091)
+                        (best_access_point, 9091)
                     )
-                    print(f"Sended request|{self.filename}|{self.local_ip} to {border_node}")
-                except socket.error:
-                    continue
+                except socket.error as e:
+                    print(f"Error sending request: {e}")
+            else:
+                print("No access points available")
 
     def receive_frames(self):
         """Continuously receive and buffer frames"""
