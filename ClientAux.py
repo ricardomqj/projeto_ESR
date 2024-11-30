@@ -8,7 +8,7 @@ import queue
 
 fronteira = ['10.0.6.2']
 
-CACHE_FILE_NAME = "cache-"
+CACHE_FILE_NAME = "cache/cache-"
 CACHE_FILE_EXT = ".jpg"
 
 class ClientRunner:
@@ -17,8 +17,8 @@ class ClientRunner:
     PLAYING = 2
     BUFFERING = 3
 
-    BUFFER_TIME = 2.0
-    FRAME_RATE = 30 
+    BUFFER_TIME = 1.5
+    FRAME_RATE = 40 
     MAX_BUFFER_SIZE = BUFFER_TIME * FRAME_RATE # Maximum frames to buffer
     
     def __init__(self, master, filename):
@@ -55,7 +55,7 @@ class ClientRunner:
         connection_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         connection_socket.settimeout(0.5)
         try:
-            connection_socket.bind((self.local_ip, 9091))
+            connection_socket.bind((self.local_ip, 9090))
             self.connection_socket = connection_socket
             print(f"RTP socket binded to -> ({(self.local_ip, 9091)})")
         except Exception as e:
@@ -83,6 +83,7 @@ class ClientRunner:
                         f"request|{self.filename}|{self.local_ip}".encode(),
                         (border_node, 9091)
                     )
+                    print(f"Sended request|{self.filename}|{self.local_ip} to {border_node}")
                 except socket.error:
                     continue
 
@@ -90,6 +91,8 @@ class ClientRunner:
         """Continuously receive and buffer frames"""
         initial_buffer_time = time.time()
         frames_received = 0
+        session_number = None
+
 
         while self.is_receiving:
             try:
@@ -98,7 +101,11 @@ class ClientRunner:
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
 
-                    if rtpPacket.getClientDestIP() == self.local_ip:
+                    if session_number is None:
+                        session_number = rtpPacket.getSessionNumber()
+                        print(f"Initialized session number: {session_number}")
+
+                    if (rtpPacket.getClientDestIP() == self.local_ip and rtpPacket.getSessionNumber() == session_number):
                         currFrameNbr = rtpPacket.seqNum()
 
                         # Write frame to file and add to buffer
@@ -233,49 +240,8 @@ class ClientRunner:
             self.label.image = photo
             self.master.update()
         except Exception as e:
-            print(f"Error updating frame: {e}")
-
-
-    def handle_server_response(self):
-        print("inside handle_server_response")
-        while self.state in [self.BUFFERING, self.PLAYING]:
-            print("inside while loop in handle_server_response")
-            try:
-                data, addr = self.connection_socket.recvfrom(20480)
-                print(f"Received data from addr -> {addr}")
-                if data:
-                    self.last_received_time = time.time()
-                    rtpPacket = RtpPacket()
-                    rtpPacket.decode(data)
-
-                    dest_ip = rtpPacket.getClientDestIP()
-                    session = rtpPacket.getSessionNumber()
-                    #print(f"Session Number received -> {session}")
-                    print(f"Frame Number received -> {rtpPacket.seqNum()}")
-                    if self.sessionId == 0:
-                        self.sessionId = session
-                        print(f"Session ID -> {self.sessionId}")
-                    if self.sessionId == session:
-                        file_founded = rtpPacket.isFileFound()
-                        if file_founded and self.local_ip == dest_ip: # freceber os frames do vÃ­deo
-                            currFrameNbr = rtpPacket.seqNum()
-
-                            if currFrameNbr > self.frameNbr:
-                                self.frameNbr = currFrameNbr
-                                frame_file = self.writeFrame(rtpPacket.getPayload(), currFrameNbr)
-                                self.frame_buffer[currFrameNbr] = frame_file
-                                print(f"Buffered frame {currFrameNbr}")
-                                #self.updateMovie(self.writeFrame(rtpPacket.getPayload()))
-                        elif file_founded and not self.local_ip == dest_ip:
-                            print("Ficheiro foi encontrado mas nÃ£o Ã© para mim")
-                        else:
-                            print("Ficheiro nÃ£o encontrado")
-                
-            except socket.timeout:
-                continue
-            except Exception as e:
-                print(f"Error receiving packet: {e}")
-                continue
+            #print(f"Error updating frame: {e}")
+            pass
 
     def monitor_and_play(self):
         """Monitor frame reception and trigger playback when complete"""
