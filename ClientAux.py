@@ -6,6 +6,7 @@ import time, os
 from RtpPacket import RtpPacket
 import queue
 import time
+import io
 
 fronteira = ['10.0.6.2', '10.0.4.2']
 
@@ -38,9 +39,6 @@ class ClientRunner:
         self.buffer_lock = threading.Lock()
         self.playback_ready = threading.Event()
         self.is_receiving = True
-        
-        #self.last_received_time = 0
-        #self.TIMEOUT_THRESHOLD = 1.5 # seconds to wait before assuming transmission is complete
 
         # Setup RTP socket
         self.setup_rtp_socket()
@@ -48,7 +46,7 @@ class ClientRunner:
         # Start playback
         self.state = self.READY
         self.start_playback()
-        #threading.Thread(target=self.run).start()
+
 
     def setup_rtp_socket(self):
         """Setup the RTP socket with proper timeout"""
@@ -58,10 +56,11 @@ class ClientRunner:
         try:
             connection_socket.bind((self.local_ip, 9090))
             self.connection_socket = connection_socket
-            print(f"RTP socket binded to -> ({(self.local_ip, 9091)})")
+            print(f"RTP socket binded to -> ({(self.local_ip, 9090)})")
         except Exception as e:
             print(f"Failed to bind socket: {e}")
             raise 
+
 
     def select_best_access_point(self):
         """
@@ -117,7 +116,7 @@ class ClientRunner:
         if self.state == self.READY:
             # Select best access point 
             best_access_point = self.select_best_access_point()
-            
+
             # Start frame receiving thread
             self.receiver_thread = threading.Thread(target=self.receive_frames)
             self.receiver_thread.daemon = True
@@ -161,11 +160,16 @@ class ClientRunner:
 
                     if (rtpPacket.getClientDestIP() == self.local_ip and rtpPacket.getSessionNumber() == session_number):
                         currFrameNbr = rtpPacket.seqNum()
+                        
+                        # Create in-memory buffer instead of writing to file
+                        frame_buffer = io.BytesIO(rtpPacket.getPayload())
+                        self.frame_buffer.put((currFrameNbr, frame_buffer))
+                        frames_received += 1
 
                         # Write frame to file and add to buffer
-                        frame_file = self.writeFrame(rtpPacket.getPayload(), currFrameNbr)
-                        self.frame_buffer.put((currFrameNbr, frame_file))
-                        frames_received += 1
+                        #frame_file = self.writeFrame(rtpPacket.getPayload(), currFrameNbr)
+                        #self.frame_buffer.put((currFrameNbr, frame_file))
+                        #frames_received += 1
 
                         # Start playback after initial buffering period
                         if not self.playback_ready.is_set():
@@ -192,7 +196,7 @@ class ClientRunner:
         while self.state == self.PLAYING:
             try:
                 # Get next frame from buffer
-                frameNbr, frame_file = self.frame_buffer.get(timeout=1.0)
+                frameNbr, frame_buffer = self.frame_buffer.get(timeout=1.0)
 
                 # Calculate time to next frame
                 current_time = time.time()
@@ -203,14 +207,14 @@ class ClientRunner:
                     time.sleep(frame_interval - time_diff)
 
                 # Display frame
-                self.updateMovie(frame_file)
+                self.updateMovie(frame_buffer)
                 last_frame_time = time.time()
 
                 # Remove played from file
-                try:
-                    os.remove(frame_file)
-                except:
-                    pass
+                #try:
+                #    os.remove(frame_buffer)
+                #except:
+                #    pass
 
             except queue.Empty:
                 # Buffer underrun - wait for more frames
@@ -286,10 +290,13 @@ class ClientRunner:
             file.write(data)
         return cachename
 
-    def updateMovie(self, imageFile):
+    def updateMovie(self, frame_buffer):
         """Update the imagge field as video frame in the GUI"""
         try:
-            photo = ImageTk.PhotoImage(Image.open(imageFile))
+            # Reset buffer position to the start
+            frame_buffer.seek(0)
+            
+            photo = ImageTk.PhotoImage(Image.open(frame_buffer))
             self.label.configure(image = photo, height = 288)
             self.label.image = photo
             self.master.update()
