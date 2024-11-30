@@ -1,9 +1,14 @@
-import socket
+from asyncio import sleep
+import socket, os
 import threading
+from random import randint
 import heapq
 from typing import Dict, Set, List, Tuple
 import logging
 import time
+from RtpPacket import RtpPacket
+from VideoStream import VideoStream
+import threading
 
 class NetworkManager:
     def __init__(self, port: int = 9090):
@@ -58,28 +63,53 @@ class NetworkManager:
 
     def dijkstra(self, graph: Dict[str, Dict[str, float]], start_node: str) -> Tuple[Dict[str, float], Dict[str, str]]:
         """Implementation of Dijkstra's algorithm for finding shortest paths."""
+        print("Inside dijkstra")
         distances = {node: float('inf') for node in graph}
         distances[start_node] = 0
         priority_queue = [(0, start_node)]
         predecessors = {node: None for node in graph}
 
         while priority_queue:
+            print("[dijkstra] Inside while loop")
             current_distance, current_node = heapq.heappop(priority_queue)
+            print(f"current_distance: {current_distance}, current_node: {current_node}")
 
             if current_distance > distances[current_node]:
                 continue
 
             for neighbor, weight in graph[current_node].items():
-                distance = current_distance + weight
-                if distance < distances[neighbor]:
-                    distances[neighbor] = distance
-                    predecessors[neighbor] = current_node
-                    heapq.heappush(priority_queue, (distance, neighbor))
+                if neighbor in self.nodes_network:
+                    
+                    print(f"Inside dijkstra(if neighb...), current_node: {current_node}, neighbor: {neighbor}, weight: {weight}")
+                    distance = current_distance + weight
+                    if distance < distances[neighbor]:
+                        distances[neighbor] = distance
+                        predecessors[neighbor] = current_node
+                        heapq.heappush(priority_queue, (distance, neighbor))
 
+        print(f"Returning distances: {distances} and predecessors: {predecessors}")
         return distances, predecessors
 
-    def send_predecessors_along_path(self, path: List[str], predecessors: Dict[str, str], stream_name) -> None:
+    def makeRtp(self, payload, frameNbr, ip_source, ip_dest, is_movie_request, file_found, sessionNumber):
+        version = 2
+        padding = 0
+        extension = 0
+        cc = 0
+        marker = 0
+        pt = 26 # MJPEG type
+        seqnum = frameNbr
+        ssrc = 0
 
+        rtpPacket = RtpPacket()
+        rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, ip_dest, ip_source, is_movie_request, file_found, sessionNumber)
+
+        return rtpPacket.getPacket()
+
+    def send_predecessors_along_path(self, path: List[str], predecessors: Dict[str, str], stream_name, ip_dest) -> None:
+        
+        print("inside send_predecessors_along_path function")
+        print(f"path: {path}")
+        print(f"predecessors: {predecessors}")
         for node in path:
             # Get the predecessor for this node
             predecessor = predecessors.get(node)
@@ -88,9 +118,10 @@ class NetworkManager:
                 # Create the message with predecessor information
                 node_address = (node, 9091)
 
-                message = f"{stream_name}|{predecessor}"
+                message = f"{stream_name}|{predecessor}|{ip_dest}"
                 
                 try:
+                    self.logger.info(f"[send_predecessors_along_path] Sending message {message} to {node_address}")    
                     self.server_socket.sendto(message.encode(), node_address)
                     self.logger.info(f"Sent predecessor {predecessor} to node {node}")
                     
@@ -117,6 +148,7 @@ class NetworkManager:
 
         # Add node to network and initialize connections
         self.nodes_network.add(client_ip)
+        self.logger.info(f"Node added to nodes_network list! Current list -> {self.nodes_network}")
 
         # Create connection tree
         connection_tree = self.create_tree()
@@ -133,6 +165,11 @@ class NetworkManager:
             if client_ip == node_acess_point:  
                 distances, predecessors = self.dijkstra(connection_tree, "10.0.0.10") # Aqui temos o IP fixo porque já sabemos que vai sair sempre do node do server
                 
+                # Debug prints
+                print("Full predecessors dictionary:")
+                for node, pred in predecessors.items():
+                    print(f"{node} -> {pred}")
+
                 path = []
 
                 current_node = client_ip
@@ -164,36 +201,85 @@ class NetworkManager:
     def handle_client(self, client_address: Tuple[str, int], message: str) -> None:
         """Handle incoming client connections and messages."""
 
+        sessionNumber = None
+        first_packet_sent = False
+
+        print(f"Received message from {client_address}: {message}")
         if message == "connecting":
             client_ip = client_address[0]
             self.connect_new_node(client_ip)
 
-        if '|' in message:
+        elif '|' in message:
             message_info = message.split("|")
-            
-            if message_info[0] == "start_stream":
-                client_ip = client_address[0]
+            print(f"Message info: {message_info}")
+            client_ip = client_address[0]
 
+            if message_info[0] == "start_stream":
+                print("Recebi um start stream request")
                 stream_name = message_info[1]
                 client_requested_ip  = message_info[2]
-
                 print(message)
 
-                self.send_predecessors_along_path(self.nodes_acess_points[client_ip][0],self.nodes_acess_points[client_ip][1], stream_name)
+                print(f"Sending the path to the send_predecessors_along_path function:")
+                print(f"path: {self.nodes_acess_points[client_ip][0]}")
+                print("_________________________________________________________")
+                print(f"full nodes_acess_points: {self.nodes_acess_points}")
+                print("_________________________________________________________")
+                self.send_predecessors_along_path(self.nodes_acess_points[client_ip][0],self.nodes_acess_points[client_ip][1], stream_name, client_requested_ip)
                 
                 print("IPs enviados para os nodes")
 
             if message_info[0] == "stream_request":
-                client_ip = client_address[0]
+                print("Recebi um stream request")
+                print(f"Message info: {message_info}")
+                client_requested_ip = message_info[2]
+
+                stream_name = message_info[1]
 
                 # FAZ AQUI O CODIGO PARA ELE COMEÇAR A MANDAR AS CENAS PARA O NODE QUE LHE PEDIU, DEPOIS TRATAR DE NO NODE ELE ENVIAR A QUEM PEDIU
-                while True:
-                    response = "movie.Mjpeg"
+                #response = "movie.Mjpeg"
 
-                    node_adress = (client_ip , 9090)   
-                    self.server_socket.sendto(response.encode(), node_adress)
-                    
-                    time.sleep(4)
+                #print(f"Sending the text {response} to {client_ip}")
+
+                filename = "movie.Mjpeg"
+
+                node_adress = (client_ip , 9090)  
+
+                if sessionNumber is None and not first_packet_sent:
+                    sessionNumber = randint(100000, 999999)
+                    first_packet_sent = True
+                
+                if os.path.exists(stream_name):
+                    print(f"Vou começar a enviar os frames do ficheiro {filename} para {node_adress}")
+                    videoStream = VideoStream(stream_name)
+                    data_frame = videoStream.nextFrame()
+                    while data_frame:
+                        frameNumber = videoStream.frameNbr()
+                        try:
+                            
+                            
+                            print(f"frameNumber: {frameNumber}|client_requested_ip: {client_requested_ip}|sessionNumber: {sessionNumber}")
+                            rtpPacket = self.makeRtp(data_frame, frameNumber, '10.0.0.10', client_requested_ip, False, True, sessionNumber)
+
+                            print(f"[handle_client] Sending RTP packet {frameNumber} to {client_ip}")
+
+                            temp_rtp_packet = RtpPacket()
+                            temp_rtp_packet.decode(rtpPacket)
+                            if temp_rtp_packet.getSessionNumber() == sessionNumber:
+                                self.server_socket.sendto(rtpPacket, node_adress)
+
+                        except Exception as e:
+                            print(f"Failed to send RTP packet: {e}")
+                            continue
+                        data_frame = videoStream.nextFrame()
+                else:
+                    try:
+                        print(f"O ficheiro {filename} pedido por {client_ip} não foi encontrado")
+                        response = self.makeRtp('', 0, '10.0.0.10', client_requested_ip, False, False, sessionNumber)
+                        self.server_socket.sendto(response, node_adress)
+                        print(f"Sent response {response} to {client_ip}")
+                    except Exception as e:
+                        print(f"Failed to send response to {client_ip}: {e}")
 
         else:
             self.logger.info(f"Received message from {client_address}: {message}")
@@ -202,7 +288,7 @@ class NetworkManager:
     def start_server(self) -> None:
         """Start the UDP server."""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        server_address = ('0.0.0.0', self.port)
+        server_address = ('10.0.0.10', self.port)
         self.server_socket.bind(server_address)
         self.logger.info(f"UDP Server listening on port {self.port}")
 
@@ -210,6 +296,7 @@ class NetworkManager:
             try:
                 data, client_address = self.server_socket.recvfrom(1024)
                 message = data.decode()
+                print(f"Received message from {client_address}: {message}")
                 
                 # Create a thread to handle the client
                 client_thread = threading.Thread(
