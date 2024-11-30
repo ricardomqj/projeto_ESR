@@ -1,226 +1,152 @@
+import sys
+from time import time
 import socket
-import threading
-import heapq
-from typing import Dict, Set, List, Tuple
-import logging
-import time
+HEADER_SIZE = 26 # Increased header size to accomodate new fields
 
-class NetworkManager:
-    def __init__(self, port: int = 9090):
-        self.port = port
-        self.nodes_network: Set[str] = {"10.0.0.10"}  # IP do server na topologia !!!
-        self.server_socket = None
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger(__name__)
-        self.nodes_connections: Dict[str, Dict[str, float]] = {
-            "10.0.0.10":{
-                "10.0.0.1":1.0
-            },
-            "10.0.0.1": {
-                "10.0.0.10": 1.0,  
-                "10.0.1.2": 1.0,
-                "10.0.3.2":1.0 
-            },
-            "10.0.1.2": {
-                "10.0.0.1": 1.0,  
-                "10.0.11.2": 1.0 ,
-                "10.0.2.1": 1.0,
-                "10.0.3.2": 1.0  
-            },
-            "10.0.2.1": {
-                "10.0.1.2": 1.0,  
-                "10.0.11.2": 1.0   
-            },
-            "10.0.11.2": {
-                "10.0.2.1": 1.0,  
-                "10.0.1.2": 1.0,
-                "10.0.3.2": 1.0,
-                "10.0.4.2": 1.0,
-                "10.0.6.2": 1.0  
-            },
-            "10.0.3.2": {
-                "10.0.1.2": 1.0,
-                "10.0.11.2": 1.0,  
-                "10.0.4.2": 1.0, 
-                "10.0.6.2": 1.0,
-                "10.0.2.1": 1.0
-            },
-            "10.0.4.2": {
-                "10.0.3.2": 1.0,
-                "10.0.11.2": 1.0
-            },
-            "10.0.6.2": {
-                "10.0.11.2": 1.0,
-                "10.0.3.2": 1.0 
-            }
-        }
-        self.nodes_acess_points = {"10.0.6.2": [[],[]], "10.0.4.2": [[],[]]} 
+class RtpPacket:	
+	header = bytearray(HEADER_SIZE)
+	
+	def __init__(self):
+		pass
+		
+	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, client_ip, source_ip, is_movie_request, file_found, session_number):
+		"""Encode the RTP packet with header fields and payload."""
+		timestamp = int(time())
+		header = bytearray(HEADER_SIZE) 
+		header[0] = (header[0] | version << 6) & 0xC0; # 2 bits
+		header[0] = (header[0] | padding << 5); # 1 bit
+		header[0] = (header[0] | extension << 4); # 1 bit
+		header[0] = (header[0] | (cc & 0x0F)); # 4 bits
+		header[1] = (header[1] | marker << 7); # 1 bit
+		header[1] = (header[1] | (pt & 0x7f)); # 7 bits
+		header[2] = (seqnum >> 8); 
+		header[3] = (seqnum & 0xFF);
+		header[4] = (timestamp >> 24);
+		header[5] = (timestamp >> 16) & 0xFF;
+		header[6] = (timestamp >> 8) & 0xFF;
+		header[7] = (timestamp & 0xFF);
+		header[8] = (ssrc >> 24);
+		header[9] = (ssrc >> 16) & 0xFF;
+		header[10] = (ssrc >> 8) & 0xFF;
+		header[11] = ssrc & 0xFF
+		
+		try:
+			# Convert IP address to 4-byte representation and add to header
+			ip_dest_bytes = socket.inet_aton(client_ip)
+			header[12:16] = ip_dest_bytes
 
-    def dijkstra(self, graph: Dict[str, Dict[str, float]], start_node: str) -> Tuple[Dict[str, float], Dict[str, str]]:
-        """Implementation of Dijkstra's algorithm for finding shortest paths."""
-        distances = {node: float('inf') for node in graph}
-        distances[start_node] = 0
-        priority_queue = [(0, start_node)]
-        predecessors = {node: None for node in graph}
+			# Convert source IP address to 4-byte representation
+			ip_source_bytes = socket.inet_aton(source_ip)
+			header[16:20] = ip_source_bytes
+		except socket.error as e:
+			print(f"Error converting IP address: {e}")
+			raise
 
-        while priority_queue:
-            current_distance, current_node = heapq.heappop(priority_queue)
+		header[20] = 1 if is_movie_request else 0
+		header[21] = 1 if file_found else 0
 
-            if current_distance > distances[current_node]:
-                continue
+		# Add session number (4 bytes)
+		header[22] = (session_number >> 24) & 0xFF
+		header[23] = (session_number >> 16) & 0xFF
+		header[24] = (session_number >> 8) & 0xFF
+		header[25] = session_number & 0xFF
 
-            for neighbor, weight in graph[current_node].items():
-                distance = current_distance + weight
-                if distance < distances[neighbor]:
-                    distances[neighbor] = distance
-                    predecessors[neighbor] = current_node
-                    heapq.heappush(priority_queue, (distance, neighbor))
+		# set header and  payload
+		self.header = header
+		self.payload = payload
+		
+	def decode(self, byteStream):
+		"""Decode the RTP packet."""
+		self.header = bytearray(byteStream[:HEADER_SIZE])
+		self.payload = byteStream[HEADER_SIZE:]
+	
+	def version(self):
+		"""Return RTP version."""
+		return int(self.header[0] >> 6)
+	
+	def seqNum(self):
+		"""Return sequence (frame) number."""
+		seqNum = self.header[2] << 8 | self.header[3]
+		return int(seqNum)
+	
+	def timestamp(self):
+		"""Return timestamp."""
+		timestamp = self.header[4] << 24 | self.header[5] << 16 | self.header[6] << 8 | self.header[7]
+		return int(timestamp)
+	
+	def payloadType(self):
+		"""Return payload type."""
+		pt = self.header[1] & 127
+		return int(pt)
+	
+	def getPayload(self):
+		"""Return payload."""
+		return self.payload
+		
+	def getPacket(self):
+		"""Return RTP packet."""
+		return self.header + self.payload
 
-        return distances, predecessors
+	def getClientDestIP(self):
+		"""Return the client IP address from the header."""
+		return '.'.join(str(b) for b in self.header[12:16])
 
-    def send_predecessors_along_path(self, path: List[str], predecessors: Dict[str, str], stream_name) -> None:
+	def getSourceIP(self):
+		"""Return the source IP address from the header."""
+		source_ip_bytes = bytearray(4)
+		source_ip_bytes[0] = self.header[16] & 0x3F 
+		source_ip_bytes[1:4] = self.header[17:20]
+		return '.'.join(str(b) for b in source_ip_bytes)
 
-        for node in path:
-            # Get the predecessor for this node
-            predecessor = predecessors.get(node)
-            
-            if predecessor:
-                # Create the message with predecessor information
-                node_address = (node, 9091)
+	def isMovieRequest(self):
+		"""Return whether the packet is a movie request."""
+		return bool(self.header[20])
+	
+	def isFileFound(self):
+		"""Return whether the movie file was found"""
+		return bool(self.header[21])
 
-                message = f"{stream_name}|{predecessor}"
-                
-                try:
-                    self.server_socket.sendto(message.encode(), node_address)
-                    self.logger.info(f"Sent predecessor {predecessor} to node {node}")
-                    
-                except Exception as e:
-                    self.logger.error(f"Failed to send predecessor to {node}: {e}")
-            else:
-                self.logger.info(f"No predecessor for node {node}")
+	def getSessionNumber(self):
+		"""Return the session number."""
+		session_number = (self.header[22] << 24) | (self.header[23] << 16) | (self.header[24] << 8) | self.header[25]
+		return int(session_number)
 
+	def printheader(self):
+		"""Imprime o cabeçalho do pacote RTP de forma legível para debug."""
+		# Exibe versão, padding, extensão e número de CSRCs
+		version = self.version()
+		padding = (self.header[0] >> 5) & 0x01
+		extension = (self.header[0] >> 4) & 0x01
+		cc = self.header[0] & 0x0F
 
-    def create_tree(self) -> Dict[str, Dict[str, float]]:
-        connections = {}
+		# Exibe marcador e tipo de payload
+		marker = (self.header[1] >> 7) & 0x01
+		payload_type = self.payloadType()
 
-        for node in self.nodes_network:
-            connections[node] = {
-                neighbor: weight 
-                for neighbor, weight in self.nodes_connections[node].items()
-                if neighbor in self.nodes_network
-            }
-            
-        return connections
+		# Exibe o número de sequência e timestamp
+		seq_num = self.seqNum()
+		timestamp = self.timestamp()
 
-    def connect_new_node(self, client_ip):
-        self.logger.info(f"New connection from {client_ip}")
+		# Exibe o SSRC
+		ssrc = (self.header[8] << 24) | (self.header[9] << 16) | (self.header[10] << 8) | self.header[11]
 
-        # Add node to network and initialize connections
-        self.nodes_network.add(client_ip)
+		# Exibe o IP de destino, assumindo que foi adicionado após o SSRC
+		dest_ip = '.'.join(str(b) for b in self.header[12:16])
+		source_ip = self.getSourceIP()
 
-        # Create connection tree
-        connection_tree = self.create_tree()
-
-        print(f"A connection_tree está {connection_tree}")
-        
-        node_adress = (client_ip , 9091)   
-        response = 'sucesso'
-
-        self.server_socket.sendto(response.encode(), node_adress)
-        
-        for node_acess_point in self.nodes_acess_points:
-
-            if client_ip == node_acess_point:  
-                distances, predecessors = self.dijkstra(connection_tree, "10.0.0.10") # Aqui temos o IP fixo porque já sabemos que vai sair sempre do node do server
-                
-                path = []
-
-                current_node = client_ip
-                while current_node is not None:
-                    print(f"current _node está {current_node} com prodecessor {predecessors[current_node]}")
-                    path.insert(0, current_node)
-                    current_node = predecessors[current_node]
-                
-                print(f"O access point {client_ip} ficou com o caminho  {path}")
-
-                self.nodes_acess_points[client_ip] = [path,predecessors]
-
-            elif len(self.nodes_acess_points[node_acess_point][0]) > 0:
-                distances, predecessors = self.dijkstra(connection_tree, node_acess_point)
-
-                path = []
-                current_node = client_ip
-                while current_node is not None:
-                    path.insert(0, current_node)
-                    current_node = predecessors[current_node]
-
-                if len(self.nodes_acess_points[node_acess_point][0]) > len(path):
-                    print(f"O access point {node_acess_point} ficou com o caminho  {path}")
-                    self.nodes_acess_points[node_acess_point] = [path,predecessors]
-
-                    #self.send_predecessors_along_path(path, predecessors)
-
-
-    def handle_client(self, client_address: Tuple[str, int], message: str) -> None:
-        """Handle incoming client connections and messages."""
-
-        if message == "connecting":
-            client_ip = client_address[0]
-            self.connect_new_node(client_ip)
-
-        if '|' in message:
-            message_info = message.split("|")
-            
-            if message_info[0] == "start_stream":
-                client_ip = client_address[0]
-
-                stream_name = message_info[1]
-                client_requested_ip  = message_info[2]
-
-                print(message)
-
-                self.send_predecessors_along_path(self.nodes_acess_points[client_ip][0],self.nodes_acess_points[client_ip][1], stream_name)
-                
-                print("IPs enviados para os nodes")
-
-            if message_info[0] == "stream_request":
-                client_ip = client_address[0]
-
-                # FAZ AQUI O CODIGO PARA ELE COMEÇAR A MANDAR AS CENAS PARA O NODE QUE LHE PEDIU, DEPOIS TRATAR DE NO NODE ELE ENVIAR A QUEM PEDIU
-                while True:
-                    response = "movie.Mjpeg"
-
-                    node_adress = (client_ip , 9090)   
-                    self.server_socket.sendto(response.encode(), node_adress)
-                    
-                    time.sleep(4)
-
-        else:
-            self.logger.info(f"Received message from {client_address}: {message}")
-
-
-    def start_server(self) -> None:
-        """Start the UDP server."""
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        server_address = ('0.0.0.0', self.port)
-        self.server_socket.bind(server_address)
-        self.logger.info(f"UDP Server listening on port {self.port}")
-
-        while True:
-            try:
-                data, client_address = self.server_socket.recvfrom(1024)
-                message = data.decode()
-                
-                # Create a thread to handle the client
-                client_thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_address, message)
-                )
-                client_thread.start()
-
-            except Exception as e:
-                self.logger.error(f"Server error: {str(e)}")
-
-if __name__ == "__main__":
-    network_manager = NetworkManager()
-    network_manager.start_server()
+		# Impressão formatada do cabeçalho
+		print("[RTP Packet] Header Information:")
+		print(f"  Version: {version}")
+		print(f"  Padding: {padding}")
+		print(f"  Extension: {extension}")
+		print(f"  CSRC Count: {cc}")
+		print(f"  Marker: {marker}")
+		print(f"  Payload Type: {payload_type}")
+		print(f"  Sequence Number: {seq_num}")
+		print(f"  Timestamp: {timestamp}")
+		print(f"  SSRC: {ssrc}")
+		print(f"  Destination IP: {dest_ip}")
+		print(f"  Source IP: {source_ip}")
+		print(f"  Is Movie Request: {self.isMovieRequest()}")
+		print(f"  File Found: {self.isFileFound()}")
+		print(f"  Session number: {self.getSessionNumber()}")
