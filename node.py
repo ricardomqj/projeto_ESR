@@ -130,6 +130,28 @@ class NetworkClient:
                     else:
                         print("Já estou a transmitir essa stream")
 
+    def handle_rtt_measurements(self):
+        """
+        Handle RTT measurement requests on a separate socket
+        This method runs in a dedicated thread and listens on port 9092
+        """
+        rtt_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rtt_socket.bind(('0.0.0.0', 9092))
+
+        while True:
+            try:
+                # Receive incoming ping request
+                data, sender_address = rtt_socket.recvfrom(1024)
+                sender_ip, sender_port = sender_address
+
+                try:
+                    rtt_socket.sendto(data, sender_address)
+                    print(f"Responded to RTT ping from {sender_ip}")
+                except Exception as e:
+                    print(f"Error responding to RTT ping: {e}")
+            except Exception as e:
+                print(f"Error in RTT measurement handler: {e}")
+                time.sleep(1)  # Prevent tight error loop
 
     def handle_requests(self):
         self.connection_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -171,6 +193,11 @@ class NetworkClient:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         try:
+            # Start RTT measurement handler thread
+            rtt_thread = threading.Thread(target=self.handle_rtt_measurements)
+            rtt_thread.daemon = True
+            rtt_thread.start()
+            
             # Start server handler thread
             server_thread = threading.Thread(target=self.handle_server_client)
             server_thread.daemon = True
@@ -180,6 +207,7 @@ class NetworkClient:
             connection_thread = threading.Thread(target=self.handle_requests)
             connection_thread.daemon = True
             connection_thread.start()
+
 
             # Send initial connection message
             client_socket.sendto(b"connecting", (server_ip, 9090))
