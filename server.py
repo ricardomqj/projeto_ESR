@@ -90,19 +90,54 @@ class NetworkManager:
         print(f"Returning distances: {distances} and predecessors: {predecessors}")
         return distances, predecessors
 
-    def makeRtp(self, payload, frameNbr, ip_source, ip_dest, is_movie_request, file_found, sessionNumber):
-        version = 2
-        padding = 0
-        extension = 0
-        cc = 0
-        marker = 0
-        pt = 26 # MJPEG type
-        seqnum = frameNbr
-        ssrc = 0
-
+    def makeRtp(self, payload, frameNbr, ip_source, ip_dest, is_movie_request, file_found, sessionNumber, filename):
+        # Check if payload is a fragmented frame
+        if payload and b'|' in payload[:50]:
+            try:
+                # Split the payload into fragments
+                parts = payload.split(b'|', 3)
+                
+                # Ensure we have enough parts
+                if len(parts) < 4:
+                    print(f"Invalid fragment format. Parts: {len(parts)}")
+                    # Return a default RTP packet or handle the error
+                    return self._create_default_rtp_packet(
+                        frameNbr, ip_source, ip_dest, 
+                        is_movie_request, file_found, 
+                        sessionNumber, filename
+                    )
+                
+                # Parse fragment metadata
+                total_fragments = int(parts[0])
+                fragment_index = int(parts[1])
+                total_frame_size = int(parts[2])
+                actual_payload = parts[3]
+                
+                # Create RTP packet with fragmentation details
+                rtpPacket = RtpPacket()
+                rtpPacket.encode(2, 0, 1, 0, frameNbr, 1 if fragment_index == total_fragments - 1 else 0, 26, 0, actual_payload, ip_dest, ip_source, is_movie_request, file_found, sessionNumber, filename)
+                return rtpPacket.getPacket()
+            
+            except (ValueError, IndexError) as e:
+                print(f"Error processing fragment: {e}")
+                # Create a default RTP packet if parsing fails
+                return self._create_default_rtp_packet(
+                    frameNbr, ip_source, ip_dest, 
+                    is_movie_request, file_found, 
+                    sessionNumber, filename
+                )
+        
+        # For non-fragmented payloads, use existing packet creation
         rtpPacket = RtpPacket()
-        rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, ip_dest, ip_source, is_movie_request, file_found, sessionNumber)
+        rtpPacket.encode(2, 0, 0, 0, frameNbr, 0, 26, 0, payload, ip_dest, ip_source, is_movie_request, file_found, sessionNumber, filename)
+        return rtpPacket.getPacket()
 
+    def _create_default_rtp_packet(self, frameNbr, ip_source, ip_dest, is_movie_request, file_found, sessionNumber, filename):
+        """
+        Create a default RTP packet when fragment parsing fails.
+        """
+        rtpPacket = RtpPacket()
+        rtpPacket.encode(2, 0, 0, 0, frameNbr, 0, 26, 0, b'', ip_dest, ip_source, is_movie_request, False, sessionNumber, filename)
         return rtpPacket.getPacket()
 
     def send_predecessors_along_path(self, path: List[str], predecessors: Dict[str, str], stream_name, ip_dest) -> None:
@@ -215,23 +250,23 @@ class NetworkManager:
             client_ip = client_address[0]
 
             if message_info[0] == "start_stream":
-                print("Recebi um start stream request")
+                #print("Recebi um start stream request")
                 stream_name = message_info[1]
                 client_requested_ip  = message_info[2]
-                print(message)
+                #print(message)
 
-                print(f"Sending the path to the send_predecessors_along_path function:")
-                print(f"path: {self.nodes_acess_points[client_ip][0]}")
-                print("_________________________________________________________")
-                print(f"full nodes_acess_points: {self.nodes_acess_points}")
-                print("_________________________________________________________")
+                #print(f"Sending the path to the send_predecessors_along_path function:")
+                #print(f"path: {self.nodes_acess_points[client_ip][0]}")
+                #print("_________________________________________________________")
+                #print(f"full nodes_acess_points: {self.nodes_acess_points}")
+                #print("_________________________________________________________")
                 self.send_predecessors_along_path(self.nodes_acess_points[client_ip][0],self.nodes_acess_points[client_ip][1], stream_name, client_requested_ip)
                 
-                print("IPs enviados para os nodes")
+                #print("IPs enviados para os nodes")
 
             if message_info[0] == "stream_request":
-                print("Recebi um stream request")
-                print(f"Message info: {message_info}")
+                #print("Recebi um stream request")
+                #print(f"Message info: {message_info}")
                 client_requested_ip = message_info[2]
 
                 stream_name = message_info[1]
@@ -256,17 +291,20 @@ class NetworkManager:
                     while data_frame:
                         frameNumber = videoStream.frameNbr()
                         try:
-                            
-                            
-                            print(f"frameNumber: {frameNumber}|client_requested_ip: {client_requested_ip}|sessionNumber: {sessionNumber}")
-                            rtpPacket = self.makeRtp(data_frame, frameNumber, '10.0.0.10', client_requested_ip, False, True, sessionNumber)
+                            #print(f"frameNumber: {frameNumber}|client_requested_ip: {client_requested_ip}|sessionNumber: {sessionNumber}")
+                            rtpPacket = self.makeRtp(data_frame, frameNumber, '10.0.0.10', client_requested_ip, False, True, sessionNumber, stream_name)
 
-                            print(f"[handle_client] Sending RTP packet {frameNumber} to {client_ip}")
+                            print(f"[handle_client] Sending RTP packet {frameNumber} to {client_ip} | asked by {client_address} | Thread -> |{threading.current_thread().name}|")
 
                             temp_rtp_packet = RtpPacket()
                             temp_rtp_packet.decode(rtpPacket)
+                            
+                            total_bytes = len(rtpPacket)
+                            print(f"Total nbr of bytes of the packet that is being sent: {total_bytes} bytes!")
                             if temp_rtp_packet.getSessionNumber() == sessionNumber:
                                 self.server_socket.sendto(rtpPacket, node_adress)
+
+                            time.sleep(1/30)
 
                         except Exception as e:
                             print(f"Failed to send RTP packet: {e}")
@@ -275,9 +313,9 @@ class NetworkManager:
                 else:
                     try:
                         print(f"O ficheiro {filename} pedido por {client_ip} não foi encontrado")
-                        response = self.makeRtp('', 0, '10.0.0.10', client_requested_ip, False, False, sessionNumber)
-                        self.server_socket.sendto(response, node_adress)
-                        print(f"Sent response {response} to {client_ip}")
+                        #response = self.makeRtp('', 0, '10.0.0.10', client_requested_ip, False, False, sessionNumber)
+                        #self.server_socket.sendto(response, node_adress)
+                        #print(f"Sent response {response} to {client_ip}")
                     except Exception as e:
                         print(f"Failed to send response to {client_ip}: {e}")
 
@@ -297,13 +335,15 @@ class NetworkManager:
                 data, client_address = self.server_socket.recvfrom(1024)
                 message = data.decode()
                 print(f"Received message from {client_address}: {message}")
-                
-                # Create a thread to handle the client
-                client_thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_address, message)
-                )
-                client_thread.start()
+                if not client_address[0] == "10.0.0.10":
+                    # Create a thread to handle the client
+                    client_thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_address, message)
+                    )
+                    client_thread.daemon = True
+                    print(f"starting -> {client_thread.name} with the message {message} from {client_address}")
+                    client_thread.start()
 
             except Exception as e:
                 self.logger.error(f"Server error: {str(e)}")
