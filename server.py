@@ -15,6 +15,9 @@ class NetworkManager:
         self.port = port
         self.nodes_network: Set[str] = {"10.0.0.10"}  # IP do server na topologia !!!
         self.server_socket = None
+        
+        self.stream_statuses: Dict[str, Dict[str, Dict[str, str]]] = {}
+        
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
         self.nodes_connections: Dict[str, Dict[str, float]] = {
@@ -253,28 +256,23 @@ class NetworkManager:
                 #print("Recebi um start stream request")
                 stream_name = message_info[1]
                 client_requested_ip  = message_info[2]
-                #print(message)
-
-                #print(f"Sending the path to the send_predecessors_along_path function:")
-                #print(f"path: {self.nodes_acess_points[client_ip][0]}")
-                #print("_________________________________________________________")
-                #print(f"full nodes_acess_points: {self.nodes_acess_points}")
-                #print("_________________________________________________________")
                 self.send_predecessors_along_path(self.nodes_acess_points[client_ip][0],self.nodes_acess_points[client_ip][1], stream_name, client_requested_ip)
-                
-                #print("IPs enviados para os nodes")
 
-            if message_info[0] == "stream_request":
-                #print("Recebi um stream request")
-                #print(f"Message info: {message_info}")
+            elif message_info[0] == "teardown":
+                # Handle teardown request
+                stream_name = message_info[1]
+                client_ip = message_info[2]
+
+                # Update stream status to NOT_PLAYING
+                if stream_name in self.stream_statuses:
+                    if client_ip in self.stream_statuses[stream_name]:
+                        self.stream_statuses[stream_name][client_ip]['status'] = 'NOT_PLAYING'
+                        print(f"Stream {stream_name} for client {client_ip} set to NOT_PLAYING")
+
+            elif message_info[0] == "stream_request":
                 client_requested_ip = message_info[2]
 
                 stream_name = message_info[1]
-
-                # FAZ AQUI O CODIGO PARA ELE COMEÇAR A MANDAR AS CENAS PARA O NODE QUE LHE PEDIU, DEPOIS TRATAR DE NO NODE ELE ENVIAR A QUEM PEDIU
-                #response = "movie.Mjpeg"
-
-                #print(f"Sending the text {response} to {client_ip}")
 
                 filename = "movie.Mjpeg"
 
@@ -284,14 +282,27 @@ class NetworkManager:
                     sessionNumber = randint(100000, 999999)
                     first_packet_sent = True
                 
+                if stream_name not in self.stream_statuses:
+                    self.stream_statuses[stream_name] = {}
+
+                self.stream_statuses[stream_name][client_requested_ip] = {
+                    'status': 'PLAYING',
+                    'sessionNumber': sessionNumber
+                }
+
                 if os.path.exists(stream_name):
                     print(f"Vou começar a enviar os frames do ficheiro {filename} para {node_adress}")
                     videoStream = VideoStream(stream_name)
                     data_frame = videoStream.nextFrame()
                     while data_frame:
+                        # Check if stream status is still PLAYING for this client
+                        stream_status = self.stream_statuses[stream_name].get(client_requested_ip, {}).get('status', 'NOT_PLAYING')
+                        if stream_status != 'PLAYING':
+                            print(f"Stopping stream for {client_requested_ip} - status is {stream_status}")
+                            break
+                        
                         frameNumber = videoStream.frameNbr()
                         try:
-                            #print(f"frameNumber: {frameNumber}|client_requested_ip: {client_requested_ip}|sessionNumber: {sessionNumber}")
                             rtpPacket = self.makeRtp(data_frame, frameNumber, '10.0.0.10', client_requested_ip, False, True, sessionNumber, stream_name)
 
                             print(f"[handle_client] Sending RTP packet {frameNumber} to {client_ip} | asked by {client_address} | Thread -> |{threading.current_thread().name}|")
@@ -301,7 +312,8 @@ class NetworkManager:
                             
                             total_bytes = len(rtpPacket)
                             print(f"Total nbr of bytes of the packet that is being sent: {total_bytes} bytes!")
-                            if temp_rtp_packet.getSessionNumber() == sessionNumber:
+                            if (temp_rtp_packet.getSessionNumber() == sessionNumber and
+                                self.stream_statuses[stream_name][client_requested_ip]['status'] == 'PLAYING'):
                                 self.server_socket.sendto(rtpPacket, node_adress)
 
                             time.sleep(1/30)
@@ -313,9 +325,6 @@ class NetworkManager:
                 else:
                     try:
                         print(f"O ficheiro {filename} pedido por {client_ip} não foi encontrado")
-                        #response = self.makeRtp('', 0, '10.0.0.10', client_requested_ip, False, False, sessionNumber)
-                        #self.server_socket.sendto(response, node_adress)
-                        #print(f"Sent response {response} to {client_ip}")
                     except Exception as e:
                         print(f"Failed to send response to {client_ip}: {e}")
 
@@ -323,12 +332,40 @@ class NetworkManager:
             self.logger.info(f"Received message from {client_address}: {message}")
 
 
+    def handle_teardown_requests(self):
+        while True:
+            try:
+                data, client_address = self.teardown_socket.recvfrom(1024)
+                message = data.decode()
+                message_info = message.split('|')
+
+                if message_info[0] == "teardown":
+                    stream_name = message_info[1]
+                    client_ip = message_info[2]
+
+                    # Update stream status to NOT_PLAYING
+                    if stream_name in self.stream_statuses:
+                        if client_ip in self.stream_statuses[stream_name]:
+                            self.stream_statuses[stream_name][client_ip]['status'] = 'NOT_PLAYING'
+                            print(f"Stream")
+
+            except Exception as e:
+                self.logger.error(f"Error in teardown request handler: {str(e)}")
+
     def start_server(self) -> None:
         """Start the UDP server."""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server_address = ('10.0.0.10', self.port)
         self.server_socket.bind(server_address)
         self.logger.info(f"UDP Server listening on port {self.port}")
+
+        self.teardown_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.teardown_socket.bind(('10.0.0.10', 9091))
+
+        # Criar uma thread para lidar com pedidos na porta 9091
+        teardown_thread = threading.Thread(target=self.handle_teardown_requests)
+        teardown_thread.daemon = True
+        teardown_thread.start()
 
         while True:
             try:
