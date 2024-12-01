@@ -109,7 +109,9 @@ class NetworkClient:
                     
                     else:
                         self.stream_requests[stream_name].append(sender_ip)
-                    
+                elif message_info[0] == "teardown": # teardown|{filename}|{client_ip}
+                    self.connection_socket.sendto(data, (self.server_ip, 9090))
+
                 else: # list [movie_name, predecessor_ip]
                     print(f"[handle_server_client] entrei no else com: {message_info} de {sender_ip}")
                     stream_name = message_info[0]  # tens de pedir stream_name ao predecessor_ip
