@@ -154,7 +154,7 @@ class ClientRunner:
                 try:
                     self.connection_socket.sendto(
                         f"request|{self.filename}|{self.local_ip}".encode(),
-                        ('10.0.4.2', 9091)
+                        (best_access_point, 9091)
                     )
                 except socket.error as e:
                     print(f"Error sending request: {e}")
