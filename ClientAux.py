@@ -19,9 +19,9 @@ class ClientRunner:
     PLAYING = 2
     BUFFERING = 3
 
-    BUFFER_TIME = 1.5
-    FRAME_RATE = 40 
-    MAX_BUFFER_SIZE = BUFFER_TIME * FRAME_RATE # Maximum frames to buffer
+    BUFFER_TIME = 1
+    FRAME_RATE = 60 
+    MAX_BUFFER_SIZE = 200 # Maximum frames to buffer
     
     def __init__(self, master, filename):
         self.master = master
@@ -64,51 +64,72 @@ class ClientRunner:
 
     def select_best_access_point(self):
         """
-        Select the best access point by measuring response times 
+        Select the best access point by measuring average response times 
+        over 5 ping attempts
         Returns IP of the best access point
         """
         ping_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        ping_socket.settimeout(1.0) # 1 second timeout for each ping
+        ping_socket.settimeout(1.0)  # 1 second timeout for each ping
 
         access_point_times = {}
 
         for access_point in fronteira:
             try:
-                # Send simple ping with current timestamp
-                ping_data = str(time.time()).encode()
+                # Reset times for this access point
+                access_point_times[access_point] = []
 
-                start_time = time.time()
-                ping_socket.sendto(ping_data, (access_point, 9092))
+                # Send 5 ping attempts
+                for _ in range(5):
+                    try:
+                        # Send simple ping with current timestamp
+                        ping_data = str(time.time()).encode()
 
-                try:
-                    #wait for response 
-                    response, _ = ping_socket.recvfrom(1024)
-                    end_time = time.time()
+                        start_time = time.time()
+                        ping_socket.sendto(ping_data, (access_point, 9092))
 
-                    # Calculate round trip time
-                    rtt = end_time - start_time
-                    access_point_times[access_point] = rtt
-                    print(f"Access Point {access_point} RTT: {rtt:.4f} seconds") 
+                        try:
+                            # Wait for response 
+                            response, _ = ping_socket.recvfrom(1024)
+                            end_time = time.time()
 
-                except socket.timeout:
-                    print(f"No response from access point {access_point}")
-                    continue
+                            # Calculate round trip time
+                            rtt = end_time - start_time
+                            access_point_times[access_point].append(rtt)
+                            print(f"Ping to Access Point {access_point} RTT: {rtt:.4f} seconds") 
+
+                        except socket.timeout:
+                            print(f"No response from access point {access_point} for this attempt")
+                            access_point_times[access_point].append(float('inf'))
+
+                    except Exception as e:
+                        print(f"Error pinging access point {access_point}: {e}")
+                        access_point_times[access_point].append(float('inf'))
 
             except Exception as e:
-                print(f"Error testing access point {access_point}: {e}")
-                continue
+                print(f"Error setting up ping for access point {access_point}: {e}")
+                access_point_times[access_point] = [float('inf')] * 5
 
         # Close the temporary ping socket
         ping_socket.close()
 
-        # Select the access point with the lowest response time
-        if access_point_times:
-            best_access_point = min(access_point_times, key=access_point_times.get)
+        # Calculate average RTT for each access point
+        access_point_avg_times = {}
+        for access_point, times in access_point_times.items():
+            # Filter out infinite values and calculate average
+            valid_times = [t for t in times if t != float('inf')]
+            if valid_times:
+                avg_rtt = sum(valid_times) / len(valid_times)
+                access_point_avg_times[access_point] = avg_rtt
+                print(f"Access Point {access_point} Average RTT: {avg_rtt:.4f} seconds")
+
+        # Select the access point with the lowest average response time
+        if access_point_avg_times:
+            best_access_point = min(access_point_avg_times, key=access_point_avg_times.get)
             print(f"Selected best access point: {best_access_point}")
             return best_access_point
         
-        # Fallback to first acces point if no responses
-        return fronteira[0] if fronteira else None
+        # Fallback to first access point if no responses
+        return fronteira[0] if fronteira else None          
 
     def start_playback(self):
         """Start video playback"""
@@ -146,6 +167,7 @@ class ClientRunner:
         frames_received = 0
         session_number = None
 
+        self.frame_buffer = []
 
         while self.is_receiving:
             try:
@@ -163,7 +185,7 @@ class ClientRunner:
                         
                         # Create in-memory buffer instead of writing to file
                         frame_buffer = io.BytesIO(rtpPacket.getPayload())
-                        self.frame_buffer.put((currFrameNbr, frame_buffer))
+                        self.frame_buffer.append((currFrameNbr, frame_buffer))
                         frames_received += 1
 
                         # Write frame to file and add to buffer
@@ -192,11 +214,17 @@ class ClientRunner:
         self.playback_ready.wait()
 
         last_frame_time = time.time()
+        last_frame_number = -1
 
         while self.state == self.PLAYING:
             try:
                 # Get next frame from buffer
-                frameNbr, frame_buffer = self.frame_buffer.get(timeout=1.0)
+                frameNbr, frame_buffer = self.frame_buffer.pop(0)
+
+                # Ensure frame are played in order
+                if frameNbr <= last_frame_number:
+                    print(f"Skipping out-of-order frame {frameNbr}")
+                    continue
 
                 # Calculate time to next frame
                 current_time = time.time()
@@ -209,19 +237,15 @@ class ClientRunner:
                 # Display frame
                 self.updateMovie(frame_buffer)
                 last_frame_time = time.time()
+                last_frame_number = frameNbr
 
                 # Remove played from file
                 #try:
                 #    os.remove(frame_buffer)
                 #except:
                 #    pass
-
-            except queue.Empty:
-                # Buffer underrun - wait for more frames
-                print("Buffer underrun - waiting for frames")
-                continue
             except Exception as e:
-                print(f"Error playing frame: {e}")
+                #print(f"Error playing frame: {e}")
                 continue
                 
 
@@ -268,7 +292,7 @@ class ClientRunner:
             print(f"Error getting local IP: {e}")
             return None
 
-    def makeRtp(self, payload, frameNbr, ip_source, ip_dest, is_movie_request):
+    def makeRtp(self, payload, frameNbr, ip_source, ip_dest, is_movie_request, file_found, sessionNumber, filename):
         version = 2
         padding = 0
         extension = 0
@@ -279,7 +303,7 @@ class ClientRunner:
         ssrc = 0
 
         rtpPacket = RtpPacket()
-        rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, ip_dest, self.local_ip, is_movie_request, False)
+        rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, ip_dest, ip_source, is_movie_request, file_found, sessionNumber, filename)
 
         return rtpPacket.getPacket()
 
