@@ -40,17 +40,18 @@ class NetworkClient:
                     print(f"Error requesting stream {stream_name}: {e}")
             
             else: # se recebeu o predecessor, então enviar stream_request para o predecessor
-                print(f"[request_streams] received_predecessor: False")
+                print(f"[request_streams] received_predecessor: True")
                 current_connection = self.connections_ip[stream_name]
                 try:
                     message = f"stream_request|{stream_name}|{ip_dest}"
                     print(f"Requesting stream {stream_name} to {current_connection}")
 
                     # send request to the target node
-                    if current_connection == "10.0.0.10":
-                        self.connection_socket.sendto(message.encode(), (current_connection, 9090))
+                    if client_ip_dest_or_message == "10.0.0.10":
+                        #self.connection_socket.sendto(message.encode(), (current_connection, 9090))
+                        pass
                     else:
-                        self.connection_socket.sendto(message.encode(), (current_connection, 9091))
+                        self.connection_socket.sendto(message.encode(), (client_ip_dest_or_message, 9091))
 
                 except Exception as e:
                     print(f"Error requesting stream {stream_name}: {e}")
@@ -164,11 +165,11 @@ class NetworkClient:
                 if data:
                     # o node deve receber aqui os pacotes RTP 
                     if self.is_rtp_packet(data): # se recebi o caralho dos pacotes RTP
-                        print(f"Received RTP packet from {sender_address}")
+                        #print(f"Received RTP packet from {sender_address}")
                         rtpPacket = RtpPacket()
                         rtpPacket.decode(data)
-                        print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
-                        filename = "movie.Mjpeg" # mudar para o nome do ficheiro estar no header do pacote RTP
+                        #print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
+                        filename = rtpPacket.getFilename() # mudar para o nome do ficheiro estar no header do pacote RTP
                         if filename in self.stream_requests:
                             for node_ip in self.stream_requests[filename]:
                                 node_address = (node_ip, 9090) # reencaminha o pacote RTP para quem lhe pediu o pacote
