@@ -1,7 +1,7 @@
 import sys
 from time import time
 import socket
-HEADER_SIZE = 26 # Increased header size to accomodate new fields
+HEADER_SIZE = 90 # 26 (original) + 64 filename
 
 class RtpPacket:	
 	header = bytearray(HEADER_SIZE)
@@ -9,7 +9,7 @@ class RtpPacket:
 	def __init__(self):
 		pass
 		
-	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, client_ip, source_ip, is_movie_request, file_found, session_number):
+	def encode(self, version, padding, extension, cc, seqnum, marker, pt, ssrc, payload, client_ip, source_ip, is_movie_request, file_found, session_number, filename):
 		"""Encode the RTP packet with header fields and payload."""
 		timestamp = int(time())
 		header = bytearray(HEADER_SIZE) 
@@ -50,6 +50,11 @@ class RtpPacket:
 		header[23] = (session_number >> 16) & 0xFF
 		header[24] = (session_number >> 8) & 0xFF
 		header[25] = session_number & 0xFF
+
+		# Add filename (64 bytes)
+		filename_bytes = filename.encode('utf-8')[:64]
+		filename_padded = filename_bytes.ljust(64, b'\0')
+		header[26:90] = filename_padded
 
 		# set header and  payload
 		self.header = header
@@ -110,6 +115,11 @@ class RtpPacket:
 		"""Return the session number."""
 		session_number = (self.header[22] << 24) | (self.header[23] << 16) | (self.header[24] << 8) | self.header[25]
 		return int(session_number)
+
+	def getFilename(self):
+		"""Return the filename from the header"""
+		filename_bytes = self.header[26:90]
+		return filename_bytes.rstrip(b'\0').decode('utf-8')
 
 	def printheader(self):
 		"""Imprime o cabeçalho do pacote RTP de forma legível para debug."""
