@@ -154,7 +154,7 @@ class ClientRunner:
                 try:
                     self.connection_socket.sendto(
                         f"request|{self.filename}|{self.local_ip}".encode(),
-                        (best_access_point, 9091)
+                        ('10.0.4.2', 9091)
                     )
                 except socket.error as e:
                     print(f"Error sending request: {e}")
@@ -251,7 +251,13 @@ class ClientRunner:
 
     def handler(self):
         """Clean up on window close"""
+        ## enviar um request para o servidor para parar de enviar frames enviar pela porta 9091
         if tkinter.messagebox.askokcancel("Quit?", "Are you sure you want to quit?"):
+            cancel_transm_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            best_access_point = self.select_best_access_point()
+            request = f"teardown|{self.filename}|{self.local_ip}"
+            print(f"Sending '{request}' request to {(best_access_point, 9091)}")
+            cancel_transm_socket.sendto(request.encode(), (best_access_point, 9091))
             self.is_receiving = False
             self.state = self.INIT
             self.connection_socket.close()
