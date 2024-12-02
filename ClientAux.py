@@ -180,7 +180,7 @@ class ClientRunner:
                         session_number = rtpPacket.getSessionNumber()
                         print(f"Initialized session number: {session_number}")
 
-                    if (rtpPacket.getClientDestIP() == self.local_ip and rtpPacket.getSessionNumber() == session_number):
+                    if rtpPacket.getSessionNumber() == session_number:
                         currFrameNbr = rtpPacket.seqNum()
                         
                         # Create in-memory buffer instead of writing to file
