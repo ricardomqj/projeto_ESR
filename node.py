@@ -119,6 +119,15 @@ class NetworkClient:
                         self.stream_requests[stream_name].append(sender_ip)
 
                 elif message_info[0] == "teardown": # teardown|{filename}|{client_ip}
+                    stream_name = message_info[1]
+                    client_ip = message_info[2]
+
+                    self.stream_request[stream_name].remove(client_ip)
+
+                    if len(self.stream_request[stream_name]) == 0:
+                        self.stream_request.remove(stream_name)
+                        print(self.stream_request)
+
                     self.connection_socket.sendto(data, (self.server_ip, 9090))
 
                 else: # list [movie_name, predecessor_ip]
@@ -184,12 +193,11 @@ class NetworkClient:
                         #print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
                         filename = rtpPacket.getFilename() # mudar para o nome do ficheiro estar no header do pacote RTP
                         if filename in self.stream_requests:
-                            i = 1
+                           
                             for node_ip in self.stream_requests[filename]:
                                 node_address = (node_ip, 9090) # reencaminha o pacote RTP para quem lhe pediu o pacote
                                 self.connection_socket.sendto(data, node_address)
-                                #print(f"{i}")
-                                i = i + 1
+                                
                                 #print(f"Sent RTP packet to {node_address} with the frame number: {rtpPacket.seqNum()}")
                         else:
                             print(f"A stream {filename} não está presente")
