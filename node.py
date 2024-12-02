@@ -122,11 +122,11 @@ class NetworkClient:
                     stream_name = message_info[1]
                     client_ip = message_info[2]
 
-                    self.stream_request[stream_name].remove(client_ip)
+                    self.stream_requests[stream_name].remove(client_ip)
 
-                    if len(self.stream_request[stream_name]) == 0:
-                        self.stream_request.remove(stream_name)
-                        print(self.stream_request)
+                    if len(self.stream_requests[stream_name]) == 0:
+                        self.stream_requests.remove(stream_name)
+                        print(self.stream_requests)
 
                     self.connection_socket.sendto(data, (self.server_ip, 9090))
 
@@ -200,7 +200,8 @@ class NetworkClient:
                                 
                                 #print(f"Sent RTP packet to {node_address} with the frame number: {rtpPacket.seqNum()}")
                         else:
-                            print(f"A stream {filename} não está presente")
+                            pass
+                            #print(f"A stream {filename} não está presente")
                     else:
                         print(f"Recebi algo que não é um pacote RTP: '{data}' de ({sender_address})")
             except Exception as e:
