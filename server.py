@@ -37,7 +37,9 @@ class NetworkManager:
             },
             "10.0.2.1": {
                 "10.0.1.2": 1.0,  
-                "10.0.11.2": 1.0   
+                "10.0.11.2": 1.0,
+                "10.0.3.2": 1.0,
+                "10.0.20.2": 1.0   
             },
             "10.0.11.2": {
                 "10.0.2.1": 1.0,  
@@ -59,7 +61,16 @@ class NetworkManager:
             },
             "10.0.6.2": {
                 "10.0.11.2": 1.0,
-                "10.0.3.2": 1.0 
+                "10.0.3.2": 1.0,
+                "10.0.21.2":1.0
+            },
+            "10.0.20.2" : {
+                "10.0.2.1": 1.0,
+                "10.0.21.2": 1.0
+            },
+            "10.0.21.2": {
+                "10.0.20.2": 1.0,
+                "10.0.6.2": 1.0
             }
         }
         self.nodes_acess_points = {"10.0.6.2": [[],[]], "10.0.4.2": [[],[]]} 
@@ -221,15 +232,24 @@ class NetworkManager:
                 self.nodes_acess_points[client_ip] = [path,predecessors]
 
             elif len(self.nodes_acess_points[node_acess_point][0]) > 0:
-                distances, predecessors = self.dijkstra(connection_tree, node_acess_point)
+                distances, predecessors = self.dijkstra(connection_tree, "10.0.0.10") # Aqui temos o IP fixo porque já sabemos que vai sair sempre do node do server
 
                 path = []
                 current_node = client_ip
                 while current_node is not None:
+                    if current_node not in predecessors:
+                        print(f"[ERROR] Nó {current_node} não tem predecessor. Caminho inválido!")
+                        path = []  # Limpa o caminho inválido
+                        break
                     path.insert(0, current_node)
                     current_node = predecessors[current_node]
 
-                if len(self.nodes_acess_points[node_acess_point][0]) > len(path):
+                # Validar se o caminho reconstrói até o nó inicial
+                if path and path[0] != "10.0.0.10":
+                    print(f"[ERROR] Caminho reconstruído não conecta ao servidor: {path}")
+                    path = []
+
+                elif len(self.nodes_acess_points[node_acess_point][0]) > len(path):
                     print(f"O access point {node_acess_point} ficou com o caminho  {path}")
                     self.nodes_acess_points[node_acess_point] = [path,predecessors]
 
