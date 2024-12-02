@@ -84,35 +84,45 @@ class NetworkClient:
                 if message_info[0] == "request": # request|{filename}|{client_ip} só recebe se for um AccPoint
                     stream_name = message_info[1]
                     client_ip = message_info[2]
-                    message = f"start_stream|{stream_name}|{client_ip}"
-                    print(f"Sending {message} to {(self.server_ip, 9090)}")
 
-                    self.server_socket.sendto(message.encode(), (self.server_ip, 9090))
 
                     if stream_name not in self.stream_requests:
                         self.stream_requests[stream_name] = [client_ip]
+                        
+                        message = f"start_stream|{stream_name}|{client_ip}"
+                        print(f"Sending {message} to {(self.server_ip, 9090)}")
+                        self.server_socket.sendto(message.encode(), (self.server_ip, 9090))
 
                     else:
                         self.stream_requests[stream_name].append(client_ip)
+
+                        print(f"Adicionei o cliente à lista para enviar,{self.stream_requests} \n")
                         
                 elif message_info[0] == "stream_request": # stream_request|{filename}|{client_ip}
                     stream_name = message_info[1]
                     client_ip = message_info[2]
 
+
                     if stream_name not in self.stream_requests:
 
-                        connection_thread = threading.Thread(target=self.request_streams(stream_name, client_ip, '', False))
+                        connection_thread = threading.Thread(
+                            target=self.request_streams,
+                            args=(stream_name, client_ip, '', False) 
+                        )
                         connection_thread.daemon = True
                         connection_thread.start()
 
                         self.stream_requests[stream_name] = [sender_ip]
                     
                     else:
+                        
                         self.stream_requests[stream_name].append(sender_ip)
+
                 elif message_info[0] == "teardown": # teardown|{filename}|{client_ip}
                     self.connection_socket.sendto(data, (self.server_ip, 9090))
 
                 else: # list [movie_name, predecessor_ip]
+
                     print(f"[handle_server_client] entrei no else com: {message_info} de {sender_ip}")
                     stream_name = message_info[0]  # tens de pedir stream_name ao predecessor_ip
                     self.predecessor_ip = message_info[1]
@@ -131,7 +141,8 @@ class NetworkClient:
                         connection_thread.start()
                             
                     else:
-                        print("Já estou a transmitir essa stream")
+                        self.stream_requests[stream_name].append(client_ip)
+                        print("A adicionei o cliente à transmição da stream")
 
     def handle_rtt_measurements(self):
         """
@@ -173,11 +184,13 @@ class NetworkClient:
                         #print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
                         filename = rtpPacket.getFilename() # mudar para o nome do ficheiro estar no header do pacote RTP
                         if filename in self.stream_requests:
+                            i = 1
                             for node_ip in self.stream_requests[filename]:
                                 node_address = (node_ip, 9090) # reencaminha o pacote RTP para quem lhe pediu o pacote
                                 self.connection_socket.sendto(data, node_address)
-                                print(f"Sent RTP packet to {node_address} with the frame number: {rtpPacket.seqNum()}")
-                                break # alterar isto, solução temporário para duplicação no envio de pacotes RTP
+                                #print(f"{i}")
+                                i = i + 1
+                                #print(f"Sent RTP packet to {node_address} with the frame number: {rtpPacket.seqNum()}")
                         else:
                             print(f"A stream {filename} não está presente")
                     else:
