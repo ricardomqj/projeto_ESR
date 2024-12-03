@@ -1,7 +1,9 @@
 import math
+import cv2
+import numpy as np
 
 class VideoStream:
-    def __init__(self, filename, max_packet_size=60000):
+    def __init__(self, filename, max_packet_size=20000):
         """
         Initialize VideoStream with optional max packet size.
         
@@ -11,47 +13,115 @@ class VideoStream:
         self.filename = filename
         self.max_packet_size = max_packet_size
         
-        try:
-            self.file = open(filename, 'rb')
-        except IOError:
-            raise IOError(f"Could not open file {filename}")
-        
+        # Generic attributes for all file types
         self.frameNum = 0
         self.end_of_file = False
         self.current_frame = None
         self.current_frame_fragments = []
         self.current_fragment_index = 0
 
-    def _read_next_frame(self):
+        # Detect file type and set up appropriate streaming method
+        if filename.lower().endswith('.mp4'):
+            self._setup_mp4_stream()
+        else:
+            # Fallback to existing MJPEG method
+            self._setup_mjpeg_stream()
+
+    def _setup_mp4_stream(self):
+        """Set up video capture for MP4 files using OpenCV."""
+        try:
+            self.video_capture = cv2.VideoCapture(self.filename)
+            if not self.video_capture.isOpened():
+                raise IOError(f"Could not open MP4 file: {self.filename}")
+            
+            # Get video properties
+            self.fps = self.video_capture.get(cv2.CAP_PROP_FPS)
+            self.total_frames = int(self.video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+        except Exception as e:
+            raise IOError(f"Error setting up MP4 stream: {e}")
+
+    def _setup_mjpeg_stream(self):
+        """Set up file reading for MJPEG files"""
+        try: 
+            self.file = open(self.filename, 'rb')
+        except IOError:
+            raise IOError(f"Could not open MJPEG file: {self.filename}")
+
+    def nextFrame(self):
         """
-        Read the next complete frame from the file.
+        Get next frame, potentially fragmented.
         
-        :return: Bytes representing the complete frame or b'' if no frame
+        :return: A fragment of the frame or b'' if no more data
+        """
+        # If we don't have a current frame or have exhausted its fragments, read a new frame
+        if not self.current_frame or self.current_fragment_index >= len(self.current_frame_fragments):
+            # Read next frame based on file type
+            if self.filename.lower().endswith('.mp4'):
+                frame = self._read_next_frame_mp4()
+            else:
+                frame = self._read_mjpeg_frame()
+
+            # If no frame, return empty bytes
+            if frame is None or len(frame) == 0:
+                return b''
+
+            # Fragment the frame
+            self.current_frame_fragments = self._fragment_frame(frame)
+            self.current_fragment_index = 0
+
+        # Return the next fragment
+        fragment = self.current_frame_fragments[self.current_fragment_index]
+        self.current_fragment_index += 1
+
+        return fragment
+
+    def _read_next_frame_mp4(self):
+        """
+        Read a frame from an MP4 file and convert to JPEG.
+        
+        :return: Bytes of JPEG-encoded frame or None if no frame
+        """
+        ret, frame = self.video_capture.read()
+
+        if not ret:
+            self.end_of_file = True
+            return b''
+        
+        # Increment frame number 
+        self.frameNum += 1
+
+        # Encode frame as JPEG
+        _, jpeg_frame = cv2.imencode('.jpg', frame)
+
+        return jpeg_frame.tobytes()
+
+    def _read_mjpeg_frame(self):
+        """
+        Read a frame from an MJPEG file.
+        
+        :return: Bytes of frame or b'' if no frame
         """
         if self.end_of_file:
             return b''
         
         # Read the first 5 bytes as potential frame length
         length_data = self.file.read(5)
-        
+
         if not length_data:
             self.end_of_file = True
             return b''
-        
+
         try:
-            # Try to convert first 5 bytes to integer frame length
             framelength = int(length_data)
-            
-            # Read the frame data
+
             data = self.file.read(framelength)
-            
+
             if data:
                 self.frameNum += 1
                 return data
             else:
                 self.end_of_file = True
                 return b''
-        
         except ValueError:
             # Fallback to JPEG marker method
             self.file.seek(-len(length_data), 1)
@@ -94,31 +164,6 @@ class VideoStream:
                 self.end_of_file = True
                 return b''
 
-    def nextFrame(self):
-        """
-        Get next frame, potentially fragmented.
-        
-        :return: A fragment of the frame or b'' if no more data
-        """
-        # If we don't have a current frame or have exhausted its fragments, read a new frame
-        if not self.current_frame or self.current_fragment_index >= len(self.current_frame_fragments):
-            # Read next frame
-            self.current_frame = self._read_next_frame()
-            
-            # If no frame, return empty bytes
-            if not self.current_frame:
-                return b''
-            
-            # Fragment the frame
-            self.current_frame_fragments = self._fragment_frame(self.current_frame)
-            self.current_fragment_index = 0
-        
-        # Return the next fragment
-        fragment = self.current_frame_fragments[self.current_fragment_index]
-        self.current_fragment_index += 1
-        
-        return fragment
-
     def _fragment_frame(self, frame_data):
         """
         Fragment a frame into smaller packets.
@@ -146,3 +191,12 @@ class VideoStream:
     def frameNbr(self):
         """Get current frame number."""
         return self.frameNum
+
+    def __del__(self):
+        """
+        Cleanup method to release resources.
+        """
+        if hasattr(self, 'video_capture'):
+            self.video_capture.release()
+        if hasattr(self, 'file'):
+            self.file.close()
