@@ -16,7 +16,7 @@ class NetworkManager:
         self.nodes_network: Set[str] = {"10.0.0.10"}  # IP do server na topologia !!!
         self.server_socket = None
         
-        self.stream_statuses: Dict[str, Dict[str, Dict[str, str, str]]] = {}
+        self.stream_statuses: Dict[str, Dict[str, Dict[str, str]]] = {}
         
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
@@ -26,25 +26,30 @@ class NetworkManager:
             },
             "10.0.0.1": {
                 "10.0.0.10": 1.0,  
+                "10.0.1.2": 1.0,
+                "10.0.3.2":1.0 
+            },
+            "10.0.1.2": {
+                "10.0.0.1": 1.0,  
                 "10.0.11.2": 1.0 ,
                 "10.0.2.1": 1.0,
                 "10.0.3.2": 1.0  
             },
             "10.0.2.1": {
-                "10.0.0.1": 1.0,  
+                "10.0.1.2": 1.0,  
                 "10.0.11.2": 1.0,
                 "10.0.3.2": 1.0,
                 "10.0.20.2": 1.0   
             },
             "10.0.11.2": {
                 "10.0.2.1": 1.0,  
-                "10.0.0.1": 1.0,
+                "10.0.1.2": 1.0,
                 "10.0.3.2": 1.0,
                 "10.0.4.2": 1.0,
                 "10.0.6.2": 1.0  
             },
             "10.0.3.2": {
-                "10.0.0.1": 1.0,
+                "10.0.1.2": 1.0,
                 "10.0.11.2": 1.0,  
                 "10.0.4.2": 1.0, 
                 "10.0.6.2": 1.0,
@@ -218,7 +223,7 @@ class NetworkManager:
 
                 current_node = client_ip
                 while current_node is not None:
-                    #print(f"current _node está {current_node} com prodecessor {predecessors[current_node]}")
+                    print(f"current _node está {current_node} com prodecessor {predecessors[current_node]}")
                     path.insert(0, current_node)
                     current_node = predecessors[current_node]
                 
@@ -233,7 +238,11 @@ class NetworkManager:
                 current_node = node_acess_point
                 
                 while current_node is not None:
-                    #print(f"current _node está {current_node} com prodecessor {predecessors[current_node]}")
+
+                    if current_node not in predecessors:
+                        print(f"[ERROR] Nó {current_node} não tem predecessor. Caminho inválido!")
+                        path = []  # Limpa o caminho inválido
+                        break
                     path.insert(0, current_node)
                     current_node = predecessors[current_node]
 
@@ -244,8 +253,6 @@ class NetworkManager:
 
                 elif len(self.nodes_acess_points[node_acess_point][0]) > len(path):
                     print(f"O access point {node_acess_point} ficou com o caminho  {path}")
-
-                    print(f"\nestou a atualizar os node acess point {node_acess_point} e o path {path} e os predecessors {predecessors}\n\n ")
                     self.nodes_acess_points[node_acess_point] = [path,predecessors]
 
                     #self.send_predecessors_along_path(path, predecessors)
@@ -271,6 +278,7 @@ class NetworkManager:
                 #print("Recebi um start stream request")
                 stream_name = message_info[1]
                 client_requested_ip  = message_info[2]
+                print(f"Recebi um start_stream request de {client_address[0]}:{client_address[1]} para o stream {stream_name} para o ip {client_requested_ip}")
                 self.send_predecessors_along_path(self.nodes_acess_points[client_ip][0],self.nodes_acess_points[client_ip][1], stream_name, client_requested_ip)
 
             elif message_info[0] == "teardown":
@@ -285,7 +293,6 @@ class NetworkManager:
                         print(f"Stream {stream_name} for client {client_ip} set to NOT_PLAYING")
 
             elif message_info[0] == "stream_request":
-                
                 client_requested_ip = message_info[2]
 
                 stream_name = message_info[1]
@@ -293,6 +300,8 @@ class NetworkManager:
                 filename = "movie.Mjpeg"
 
                 node_adress = (client_ip , 9090)  
+
+                print(f"Recebi um start_stream request de {client_address[0]}:{client_address[1]} para a stream {stream_name} para o ip {client_requested_ip}")
 
                 if sessionNumber is None and not first_packet_sent:
                     sessionNumber = randint(100000, 999999)
@@ -321,13 +330,15 @@ class NetworkManager:
                         try:
                             rtpPacket = self.makeRtp(data_frame, frameNumber, '10.0.0.10', client_requested_ip, False, True, sessionNumber, stream_name)
 
-                            #print(f"[handle_client] Sending RTP packet {frameNumber} to {client_ip} | asked by {client_address} | Thread -> |{threading.current_thread().name}|")
+                            print(f"[handle_client] Sending RTP packet {frameNumber} to {client_ip} | asked by {client_address} | Thread -> |{threading.current_thread().name}|")
 
                             temp_rtp_packet = RtpPacket()
                             temp_rtp_packet.decode(rtpPacket)
                             
+                            print(f"Frame {temp_rtp_packet.seqNum()} gerado, tamanho, {len(temp_rtp_packet.getPayload())} bytes")
+
                             total_bytes = len(rtpPacket)
-                            #print(f"Total nbr of bytes of the packet that is being sent: {total_bytes} bytes!")
+                            print(f"Total nbr of bytes of the packet that is being sent: {total_bytes} bytes!")
                             if (temp_rtp_packet.getSessionNumber() == sessionNumber and
                                 self.stream_statuses[stream_name][client_requested_ip]['status'] == 'PLAYING'):
                                 self.server_socket.sendto(rtpPacket, node_adress)
