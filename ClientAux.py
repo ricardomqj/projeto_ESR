@@ -7,6 +7,9 @@ from RtpPacket import RtpPacket
 import queue
 import time
 import io
+from time import sleep
+import numpy as np
+import cv2
 
 fronteira = ['10.0.6.2', '10.0.4.2']
 
@@ -175,6 +178,9 @@ class ClientRunner:
                 if data:
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
+                    print("Information of the packet received:")
+                    print(f"{rtpPacket.printheader()}")
+                    print(f"Frame recebido, tamanho: {len(rtpPacket.getPayload())} bytes")
 
                     if session_number is None:
                         session_number = rtpPacket.getSessionNumber()
@@ -223,7 +229,7 @@ class ClientRunner:
 
                 # Ensure frame are played in order
                 if frameNbr <= last_frame_number:
-                    print(f"Skipping out-of-order frame {frameNbr}")
+                    #print(f"Skipping out-of-order frame {frameNbr}")
                     continue
 
                 # Calculate time to next frame
@@ -236,6 +242,7 @@ class ClientRunner:
 
                 # Display frame
                 self.updateMovie(frame_buffer)
+                sleep(1/60)
                 last_frame_time = time.time()
                 last_frame_number = frameNbr
 
@@ -323,13 +330,34 @@ class ClientRunner:
     def updateMovie(self, frame_buffer):
         """Update the imagge field as video frame in the GUI"""
         try:
+            print(f"Inside updateMovie function")
             # Reset buffer position to the start
+            """
+
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            photo = ImageTk.PhotoImage(Image.fromarray(frame_rgb))
+            """
             frame_buffer.seek(0)
             
-            photo = ImageTk.PhotoImage(Image.open(frame_buffer))
-            self.label.configure(image = photo, height = 288)
-            self.label.image = photo
-            self.master.update()
+            frame_data = frame_buffer.read()
+
+            nparr = np.frombuffer(frame_data, np.uint8)
+
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            if frame is not None:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                image = Image.fromarray(frame_rgb)
+                photo = ImageTk.PhotoImage(image)
+                self.label.configure(image=photo, height=720, width=1280)
+                self.label.image = photo
+                self.master.update()
+
+            #photo = ImageTk.PhotoImage(Image.open())
+            #self.label.configure(image = photo, height = 1080, width = 1920)
+            #self.label.image = photo
+            #self.master.update()
         except Exception as e:
             #print(f"Error updating frame: {e}")
             pass
