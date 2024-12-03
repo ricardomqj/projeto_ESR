@@ -30,9 +30,11 @@ class NetworkClient:
                     
                     # Send request to the target node
                     if current_connection == "10.0.0.10":
+                        
                         print(f"[request_streams(current_connection == '10.0.0.10')] Enviando para {(current_connection, 9090)} a mensagem {message}")
                         self.connection_socket.sendto(message.encode(), (current_connection, 9090)) # verificação feita porque o server está ouvir numa porta diferente dos nodes
                     else:
+                        
                         print(f"[request_streams] Enviando para {(current_connection, 9091)} a mensagem {message}")
                         self.connection_socket.sendto(message.encode(), (current_connection, 9091))
                     
@@ -48,7 +50,7 @@ class NetworkClient:
 
                     # send request to the target node
                     if client_ip_dest_or_message == "10.0.0.10":
-                        #self.connection_socket.sendto(message.encode(), (current_connection, 9090))
+                        self.connection_socket.sendto(message.encode(), (current_connection, 9090))
                         pass
                     else:
                         self.connection_socket.sendto(message.encode(), (client_ip_dest_or_message, 9091))
@@ -84,7 +86,6 @@ class NetworkClient:
                 if message_info[0] == "request": # request|{filename}|{client_ip} só recebe se for um AccPoint
                     stream_name = message_info[1]
                     client_ip = message_info[2]
-
 
                     if stream_name not in self.stream_requests:
                         self.stream_requests[stream_name] = [client_ip]
@@ -122,13 +123,25 @@ class NetworkClient:
                     stream_name = message_info[1]
                     client_ip = message_info[2]
 
-                    self.stream_requests[stream_name].remove(client_ip)
+                    self.stream_requests[stream_name].remove(sender_ip)
 
                     if len(self.stream_requests[stream_name]) == 0:
-                        self.stream_requests.remove(stream_name)
+                        del self.stream_requests[stream_name]
+
                         print(self.stream_requests)
 
-                    self.connection_socket.sendto(data, (self.server_ip, 9090))
+                    node_stream_request_ip = self.connections_ip[stream_name]
+                    
+                    del self.connections_ip[stream_name]
+
+                    print(f"apoós dar del {self.connections_ip} \n")
+                    
+                    if node_stream_request_ip != "10.0.0.10":
+                        self.connection_socket.sendto(data, (node_stream_request_ip, 9091))
+                    else:
+                        self.connection_socket.sendto(data, (self.server_ip, 9090))
+                    
+                    print(f"Dei delete e mandei pacote para apagar para trás {self.connections_ip}\n")
 
                 else: # list [movie_name, predecessor_ip]
 
@@ -190,7 +203,7 @@ class NetworkClient:
                         #print(f"Received RTP packet from {sender_address}")
                         rtpPacket = RtpPacket()
                         rtpPacket.decode(data)
-                        #print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
+                        print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
                         filename = rtpPacket.getFilename() # mudar para o nome do ficheiro estar no header do pacote RTP
                         if filename in self.stream_requests:
                            
