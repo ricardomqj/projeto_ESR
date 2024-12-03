@@ -16,50 +16,40 @@ class NetworkClient:
         self.predecessor_ip = ''
 
     def request_streams(self, stream_name, client_ip_dest_or_message, ip_dest, received_predecessor):
-        # client dest_ip é usado apenas se for um pedido de stream
+        """
+        Faz um pedido de stream para um nó ou predecessor.
+        """
+        print(f"\n\n ----------- PEDIU -------------\n\n")
+        print(f"[DEBUG] request_streams chamado para stream: {stream_name}, client_ip_dest_or_message: {client_ip_dest_or_message}, ip_dest: {ip_dest}, received_predecessor: {received_predecessor}")
+
         try:
-            
-            if not received_predecessor: # se não recebeu o predecessor, então recebeu um stream_request|{filename}|{client_ip} de outro nodo
-                current_connection = self.connections_ip[stream_name]
-                print(f"[request_streams] received_predecessor: False")
+            # Verificar se o stream_name existe em connections_ip
+            if stream_name not in self.connections_ip:
+                print(f"[ERROR] Stream {stream_name} não encontrado em connections_ip!")
+                return
 
-                try:
-                    message = f"stream_request|{stream_name}|{client_ip_dest_or_message}"
+            # Obter conexão atual
+            current_connection = self.connections_ip[stream_name]
+            message = f"stream_request|{stream_name}|{client_ip_dest_or_message if not received_predecessor else ip_dest}"
 
-                    print(f"Requesting stream {stream_name} to {current_connection}")
-                    
-                    # Send request to the target node
-                    if current_connection == "10.0.0.10":
-                        
-                        print(f"[request_streams(current_connection == '10.0.0.10')] Enviando para {(current_connection, 9090)} a mensagem {message}")
-                        self.connection_socket.sendto(message.encode(), (current_connection, 9090)) # verificação feita porque o server está ouvir numa porta diferente dos nodes
-                    else:
-                        
-                        print(f"[request_streams] Enviando para {(current_connection, 9091)} a mensagem {message}")
-                        self.connection_socket.sendto(message.encode(), (current_connection, 9091))
-                    
-                except Exception as e:
-                    print(f"Error requesting stream {stream_name}: {e}")
-            
-            else: # se recebeu o predecessor, então enviar stream_request para o predecessor
-                print(f"[request_streams] received_predecessor: True")
-                current_connection = self.connections_ip[stream_name]
-                try:
-                    message = f"stream_request|{stream_name}|{ip_dest}"
-                    print(f"Requesting stream {stream_name} to {current_connection}")
+            # Determinar a porta de destino
+            if current_connection == "10.0.0.10":
+                destination = (current_connection, 9090)
+            else:
+                destination = (current_connection, 9091)
 
-                    # send request to the target node
-                    if client_ip_dest_or_message == "10.0.0.10":
-                        self.connection_socket.sendto(message.encode(), (current_connection, 9090))
-                        pass
-                    else:
-                        self.connection_socket.sendto(message.encode(), (client_ip_dest_or_message, 9091))
+            # Log de envio
+            print(f"[INFO] Enviando stream_request para {destination} com mensagem: {message}")
 
-                except Exception as e:
-                    print(f"Error requesting stream {stream_name}: {e}")
+            # Enviar a mensagem
+            self.connection_socket.sendto(message.encode(), destination)
+
+        except KeyError as e:
+            print(f"[ERROR] KeyError em connections_ip: {e}")
         except Exception as e:
-            print(f"Error in stream request handler: {e}")
-            time.sleep(1)  # Wait before retrying if there's an error
+            print(f"[ERROR] Exceção em request_streams: {e}")
+            time.sleep(1)  # Aguarde antes de tentar novamente, se necessário
+
 
     def is_rtp_packet(self, data):
         if len(data) < 26: # HEADER_SIZE IS CURRENTLY 26
@@ -105,7 +95,6 @@ class NetworkClient:
 
 
                     if stream_name not in self.stream_requests:
-
                         connection_thread = threading.Thread(
                             target=self.request_streams,
                             args=(stream_name, client_ip, '', False) 
@@ -123,18 +112,26 @@ class NetworkClient:
                     stream_name = message_info[1]
                     client_ip = message_info[2]
 
+                    print(f"O stream_requests antes de remover {self.stream_requests}\n")
+
                     self.stream_requests[stream_name].remove(sender_ip)
+                    
+                    print(f"O stream_requests após de remover {self.stream_requests}\n")
 
                     if len(self.stream_requests[stream_name]) == 0:
                         del self.stream_requests[stream_name]
 
-                        print(self.stream_requests)
+                    print(self.stream_requests)
+
+                    print("-------------------\n")
+
+                    print(f"O connections_ip antes de remover {self.connections_ip}\n")
 
                     node_stream_request_ip = self.connections_ip[stream_name]
                     
                     del self.connections_ip[stream_name]
 
-                    print(f"apoós dar del {self.connections_ip} \n")
+                    print(f"O connections_ip após de remover {self.connections_ip}\n")
                     
                     if node_stream_request_ip != "10.0.0.10":
                         self.connection_socket.sendto(data, (node_stream_request_ip, 9091))
@@ -154,17 +151,20 @@ class NetworkClient:
                     print(f"Stream name: {stream_name}")
 
                     if stream_name not in self.connections_ip:
-
+                        
+                        
                         self.connections_ip[stream_name] = message_info[1]
-                        print(f"Adicionada a nova conexão: {self.connections_ip}")
+                        print(f"Adicionada a nova conexão: {self.connections_ip}\n -------- VOU ENTRAR NA THREAD PARA PEDIR ")
 
+                        
                         connection_thread = threading.Thread(target=self.request_streams(stream_name, self.predecessor_ip, ip_dest, True))
                         connection_thread.daemon = True
                         connection_thread.start()
                             
                     else:
-                        self.stream_requests[stream_name].append(client_ip)
-                        print("A adicionei o cliente à transmição da stream")
+                        if client_ip not in self.stream_requests[stream_name]:
+                            self.stream_requests[stream_name].append(client_ip)
+                            print("A adicionei o cliente à transmição da stream")
 
     def handle_rtt_measurements(self):
         """
@@ -203,7 +203,7 @@ class NetworkClient:
                         #print(f"Received RTP packet from {sender_address}")
                         rtpPacket = RtpPacket()
                         rtpPacket.decode(data)
-                        print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
+                        #print(f"Forwarding RTP packet with frame number: {rtpPacket.seqNum()}")
                         filename = rtpPacket.getFilename() # mudar para o nome do ficheiro estar no header do pacote RTP
                         if filename in self.stream_requests:
                            
