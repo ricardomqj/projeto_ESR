@@ -350,7 +350,7 @@ class ClientRunner:
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image = Image.fromarray(frame_rgb)
                 photo = ImageTk.PhotoImage(image)
-                self.label.configure(image=photo, height=720, width=1280)
+                self.label.configure(image=photo, height=480, width= 854)
                 self.label.image = photo
                 self.master.update()
 

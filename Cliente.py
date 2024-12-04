@@ -6,7 +6,7 @@ def main():
     try:
         filename = sys.argv[1]
     except:
-        print(f"Usage: python Client.py <filename>")
+        print(f"Usage: python Cliente.py <filename>")
 
     root = Tk()
 
